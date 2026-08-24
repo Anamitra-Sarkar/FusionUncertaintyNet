@@ -165,20 +165,28 @@ def history(user=Depends(verify_token), limit: int = 20):
         from firebase_admin import firestore
         db = firestore.client()
         # query fusion_predictions where uid == user uid, order by created_at desc
-        q = db.collection("fusion_predictions").where("uid", "==", user["uid"]).order_by("created_at", direction=firestore.Query.DESCENDING).limit(min(limit, 50))
-        docs = q.stream()
-        items = []
-        for d in docs:
-            data = d.to_dict()
-            data["id"] = d.id
-            # convert timestamp
-            if "created_at" in data and hasattr(data["created_at"], "isoformat"):
-                data["created_at"] = data["created_at"].isoformat()
-            items.append(data)
-        return {"items": items}
+        # Handle case where Firestore database not exists (cabbage-guard may need manual enable via console)
+        try:
+            q = db.collection("fusion_predictions").where("uid", "==", user["uid"]).order_by("created_at", direction=firestore.Query.DESCENDING).limit(min(limit, 50))
+            docs = q.stream()
+            items = []
+            for d in docs:
+                data = d.to_dict()
+                data["id"] = d.id
+                if "created_at" in data and hasattr(data["created_at"], "isoformat"):
+                    data["created_at"] = data["created_at"].isoformat()
+                items.append(data)
+            return {"items": items}
+        except Exception as inner:
+            # Firestore not enabled -> return empty with note, do not crash
+            if "does not exist" in str(inner) or "NOT_FOUND" in str(inner) or "404" in str(inner):
+                print(f"[lite] Firestore not enabled, returning empty history: {inner}")
+                return {"items": [], "note": "Firestore database not yet enabled for cabbage-guard — enable via https://console.cloud.google.com/datastore/setup?project=cabbage-guard or use mock history. Predictions still work and are returned directly."}
+            raise
     except Exception as e:
         print(f"[lite] history error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Graceful fallback instead of 500
+        return {"items": [], "note": f"History temporarily unavailable: {str(e)[:200]}", "error": str(e)[:500]}
 
 @app.post("/api/explain")
 def explain(req: ExplainRequest, user=Depends(verify_token)):
