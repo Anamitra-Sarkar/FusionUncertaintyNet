@@ -33,3 +33,4 @@ tmp/
 .kaggle/
 .modal.toml
 .vercel
+frontend/.gitignore
