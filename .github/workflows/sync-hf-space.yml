@@ -1,0 +1,36 @@
+name: Sync Heavy Backend to HF Space
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend-heavy/**'
+      - 'training/**'
+      - '.github/workflows/sync-hf-space.yml'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$HF_TOKEN" ]; then echo "HF_TOKEN not set"; exit 1; fi
+          git config user.email "anamitrasarslsn10ab@gmail.com"
+          git config user.name "Anamitra-Sarkar"
+          # HF Space repo: bhumika-tewari-282006/fusionuncertaintynet-heavy
+          SPACE="bhumika-tewari-282006/fusionuncertaintynet-heavy"
+          echo "Syncing to $SPACE"
+          git remote add hf https://bhumika-tewari-282006:${HF_TOKEN}@huggingface.co/spaces/${SPACE} || git remote set-url hf https://bhumika-tewari-282006:${HF_TOKEN}@huggingface.co/spaces/${SPACE}
+          # subtree split for backend-heavy only, as Space expects Dockerfile at root
+          git subtree split --prefix=backend-heavy -b hf-sync || (echo "subtree failed, pushing full backend-heavy"; git checkout -b hf-sync && git rm -rf . && cp -r backend-heavy/* . 2>/dev/null || true)
+          git push hf hf-sync:main -f
+          echo "Pushed to HF Space $SPACE"

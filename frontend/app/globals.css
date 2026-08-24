@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { color-scheme: light; }
+body { background: #FFFCF8; color: #1A1A1A; font-feature-settings: "ss01" 1; }
+::selection { background: #0F766E; color: white; }
+* { scrollbar-width: thin; scrollbar-color: #E8E0D8 transparent; }

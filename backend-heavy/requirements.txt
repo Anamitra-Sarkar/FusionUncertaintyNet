@@ -1,0 +1,11 @@
+fastapi==0.110.0
+uvicorn[standard]==0.30.0
+pydantic==2.7.0
+torch==2.3.1
+numpy==1.26.4
+biopython==1.83
+scikit-learn==1.4.2
+transformers==4.41.2
+fair-esm==2.0.0
+huggingface_hub==0.24.0
+python-multipart==0.0.9

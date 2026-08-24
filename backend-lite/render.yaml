@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: fusionuncertaintynet-lite
+    env: docker
+    dockerfilePath: ./backend-lite/Dockerfile
+    dockerContext: ./backend-lite
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: HF_SPACE_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FIREBASE_ADMIN_JSON_BASE64
+        sync: false
+      - key: HEAVY_SHARED_SECRET
+        sync: false
