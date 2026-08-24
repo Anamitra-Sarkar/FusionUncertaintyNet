@@ -130,10 +130,11 @@ async def predict_proxy(req: PredictRequest, user=Depends(verify_token)):
         data = resp.json()
 
     # log to Firestore (namespaced fusion_predictions) — best effort, don't fail request if Firestore down
+    # cabbage-guard Firestore database is named "default" (without parentheses) in asia-south1, not "(default)"
     try:
         if _firebase_inited:
             from firebase_admin import firestore
-            db = firestore.client()
+            db = firestore.client(database="default")
             job_id = f"{user['uid']}_{int(time.time()*1000)}"
             doc = {
                 "uid": user["uid"],
@@ -163,7 +164,7 @@ def history(user=Depends(verify_token), limit: int = 20):
         return {"items": [], "note": "Firebase not configured — mock history"}
     try:
         from firebase_admin import firestore
-        db = firestore.client()
+        db = firestore.client(database="default")
         # query fusion_predictions where uid == user uid, order by created_at desc
         # Handle case where Firestore database not exists (cabbage-guard may need manual enable via console)
         try:
