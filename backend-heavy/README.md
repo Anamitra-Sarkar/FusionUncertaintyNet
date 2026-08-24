@@ -16,3 +16,4 @@ Docker FastAPI for GPU inference. Triggered by GitHub Actions on `backend-heavy/
 - `POST /predict` {sequence, plddt, phi, psi, pae}
 
 Env: `HEAVY_SHARED_SECRET`, `MODEL_PATH=./checkpoints`
+# Updated Monday 24 August 2026 06:21:31 AM UTC
