@@ -134,7 +134,14 @@ async def predict_proxy(req: PredictRequest, user=Depends(verify_token)):
     try:
         if _firebase_inited:
             from firebase_admin import firestore
-            db = firestore.client(database_id="default")
+            # Try database_id="default" for firebase_admin>=6.6, fallback to database="default" or default
+            try:
+                db = firestore.client(database_id="default")
+            except TypeError:
+                try:
+                    db = firestore.client(database="default")
+                except TypeError:
+                    db = firestore.client()
             job_id = f"{user['uid']}_{int(time.time()*1000)}"
             doc = {
                 "uid": user["uid"],
@@ -164,7 +171,13 @@ def history(user=Depends(verify_token), limit: int = 20):
         return {"items": [], "note": "Firebase not configured — mock history"}
     try:
         from firebase_admin import firestore
-        db = firestore.client(database_id="default")
+        try:
+            db = firestore.client(database_id="default")
+        except TypeError:
+            try:
+                db = firestore.client(database="default")
+            except TypeError:
+                db = firestore.client()
         # query fusion_predictions where uid == user uid, order by created_at desc
         # Handle case where Firestore database not exists (cabbage-guard may need manual enable via console)
         try:
