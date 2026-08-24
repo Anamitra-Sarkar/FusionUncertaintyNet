@@ -1,7 +1,7 @@
 ---
 title: FusionUncertaintyNet Heavy
 emoji: 🧬
-colorFrom: teal
+colorFrom: green
 colorTo: indigo
 sdk: docker
 pinned: false
