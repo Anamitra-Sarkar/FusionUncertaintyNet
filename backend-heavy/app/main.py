@@ -24,17 +24,26 @@ def get_model():
     global _model
     if _model is None:
         from fusionuncertaintynet.model import FusionUncertaintyNet
-        # try to load checkpoint if exists in ./checkpoints else init random for demo
         ckpt = os.getenv("MODEL_PATH", "./checkpoints")
+        hf_repo = os.getenv("HF_MODEL_REPO", "bhumika-tewari-282006/fusionuncertaintynet-best")
         try:
             if os.path.exists(f"{ckpt}/pytorch_model.bin"):
                 _model = FusionUncertaintyNet.from_pretrained(ckpt, device=_device)
-                print(f"[heavy] loaded checkpoint from {ckpt}")
+                print(f"[heavy] loaded checkpoint from local {ckpt}")
             else:
-                _model = FusionUncertaintyNet()
-                _model.to(_device)
-                _model.eval()
-                print(f"[heavy] initialized random model on {_device} (no checkpoint found at {ckpt})")
+                # Try HF Hub (P100-trained checkpoints auto-pushed)
+                try:
+                    from huggingface_hub import snapshot_download
+                    print(f"[heavy] trying HF Hub {hf_repo}...")
+                    local = snapshot_download(repo_id=hf_repo, allow_patterns=["pytorch_model.bin","config.json"], token=os.getenv("HF_TOKEN"))
+                    _model = FusionUncertaintyNet.from_pretrained(local, device=_device)
+                    print(f"[heavy] loaded checkpoint from HF Hub {hf_repo} -> {local}")
+                except Exception as hf_e:
+                    print(f"[heavy] HF Hub load failed ({hf_e}), using random init")
+                    _model = FusionUncertaintyNet()
+                    _model.to(_device)
+                    _model.eval()
+                    print(f"[heavy] initialized random model on {_device}")
         except Exception as e:
             print(f"[heavy] failed to load checkpoint: {e}, using random")
             _model = FusionUncertaintyNet()

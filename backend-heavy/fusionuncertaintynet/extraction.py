@@ -49,7 +49,16 @@ class ESM2Extractor:
 
     def _resolve_device(self, d: str) -> str:
         if d == "auto":
-            return "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                try:
+                    cap = torch.cuda.get_device_capability(0)
+                    if cap[0] < 7:
+                        print(f"[extraction] P100 sm_{cap[0]}{cap[1]} not supported, falling back to CPU")
+                        return "cpu"
+                except:
+                    pass
+                return "cuda"
+            return "cpu"
         return d
 
     def _load(self):
@@ -105,7 +114,16 @@ class ProtT5Extractor:
 
     def _resolve_device(self, d: str) -> str:
         if d == "auto":
-            return "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                try:
+                    cap = torch.cuda.get_device_capability(0)
+                    if cap[0] < 7:
+                        print(f"[extraction] P100 sm_{cap[0]}{cap[1]} not supported, falling back to CPU")
+                        return "cpu"
+                except:
+                    pass
+                return "cuda"
+            return "cpu"
         return d
 
     def _load(self):
