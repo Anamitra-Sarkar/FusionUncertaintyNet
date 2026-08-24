@@ -21,9 +21,18 @@ from dataset import ProteinQualityDataset
 
 def get_device():
     if torch.cuda.is_available():
-        name = torch.cuda.get_device_name(0)
-        print(f"[train] GPU: {name}")
-        return "cuda"
+        try:
+            name = torch.cuda.get_device_name(0)
+            cap = torch.cuda.get_device_capability(0)
+            print(f"[train] GPU: {name} cap={cap}")
+            # P100 is sm_60, not supported by PyTorch 2.3+ (needs sm_70+). Fall back to CPU for P100.
+            if cap[0] < 7:
+                print(f"[train] GPU {name} with sm_{cap[0]}{cap[1]} not supported by this PyTorch (needs sm_70+). Falling back to CPU for P100 compatibility.")
+                return "cpu"
+            return "cuda"
+        except Exception as e:
+            print(f"[train] GPU check failed {e}, using cuda")
+            return "cuda"
     return "cpu"
 
 def infer_batch_size(device):
