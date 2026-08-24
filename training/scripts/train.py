@@ -116,7 +116,10 @@ def train_one_epoch(model, dataset, optimizer, device, epoch, grad_accum=2):
         if i % 50 == 0:
             print(f"[train] epoch {epoch} step {i}/{len(dataset)} loss {loss.item()*grad_accum:.3f} mse {logs['mse']:.2f} ev {logs['ev_nll']:.2f}")
         # free
-        del feats, esm, prott5, af, out
+        try:
+            del feats
+        except: pass
+        del esm, prott5, af, out
         if device=="cuda":
             torch.cuda.empty_cache()
     return total_loss / max(n,1)
