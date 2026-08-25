@@ -18,6 +18,7 @@ app.add_middleware(
 
 # Lazy model singleton
 _model = None
+_model_source = "not-loaded"
 _device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def get_model():
@@ -28,7 +29,9 @@ def get_model():
         hf_repo = os.getenv("HF_MODEL_REPO", "bhumika-tewari-282006/fusionuncertaintynet-best")
         try:
             if os.path.exists(f"{ckpt}/pytorch_model.bin"):
+                global _model_source
                 _model = FusionUncertaintyNet.from_pretrained(ckpt, device=_device)
+                _model_source = f"local:{ckpt}"
                 print(f"[heavy] loaded checkpoint from local {ckpt}")
             else:
                 # Try HF Hub (P100-trained checkpoints auto-pushed)
@@ -37,12 +40,14 @@ def get_model():
                     print(f"[heavy] trying HF Hub {hf_repo}...")
                     local = snapshot_download(repo_id=hf_repo, allow_patterns=["pytorch_model.bin","config.json"], token=os.getenv("HF_TOKEN"))
                     _model = FusionUncertaintyNet.from_pretrained(local, device=_device)
+                    _model_source = f"hf-hub:{hf_repo}"
                     print(f"[heavy] loaded checkpoint from HF Hub {hf_repo} -> {local}")
                 except Exception as hf_e:
                     print(f"[heavy] HF Hub load failed ({hf_e}), using random init")
                     _model = FusionUncertaintyNet()
                     _model.to(_device)
                     _model.eval()
+                    _model_source = "random-init"
                     print(f"[heavy] initialized random model on {_device}")
         except Exception as e:
             print(f"[heavy] failed to load checkpoint: {e}, using random")
@@ -91,7 +96,8 @@ def verify_shared_secret(x_render_secret: Optional[str] = Header(None), authoriz
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "device": _device, "model_loaded": _model is not None, "cuda": torch.cuda.is_available()}
+    return {"status": "ok", "device": _device, "model_loaded": _model is not None,
+            "cuda": torch.cuda.is_available(), "model_source": _model_source}
 
 @app.get("/")
 def root():
@@ -189,7 +195,7 @@ def predict(req: PredictRequest):
         gates=gates,
         residues=residues,
         ramachandran_outliers=outliers,
-        model_version="0.1.0-random" if not os.path.exists("./checkpoints/pytorch_model.bin") else "0.1.0-checkpoint"
+        model_version=f"0.1.0-{_model_source}"
     )
 
 @app.post("/batch")

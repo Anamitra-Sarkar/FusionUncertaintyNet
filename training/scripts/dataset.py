@@ -1,4 +1,7 @@
 """
+[TEST-ONLY] Synthetic fallback below exists purely to smoke-test plumbing.
+The REAL pipeline is data-pipeline/fetch_real.py + training/scripts/train_real.py
+(real AFDB sequences, real pLDDT targets/features). Do not use _make_synthetic for results.""""
 Dataset for FusionUncertaintyNet
 - AFdb-derived parquet: sequence, plddt, phi, psi, pae_row stats, lddt_target per-residue
 - Splits by UniRef cluster to avoid leakage

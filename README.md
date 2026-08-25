@@ -60,3 +60,13 @@ Firebase `cabbage-guard` reused with `fusion_*` namespacing. Login mandatory. Ev
 ## Authors
 
 Built for client project — 2026.
+
+
+## Status (2026-08-25) — REAL pipeline
+| Stage | Source | Where |
+|---|---|---|
+| Data | AlphaFold DB v6 PDB B-factors (REAL per-residue pLDDT), UniProt ~570k stream | Kaggle `fusion-data-501k` → `hf.co/datasets/bhumika-tewari-282006/fusion-afdb-quality-real` |
+| Train | Dual-path REAL frozen PLMs (T4: ESM2-t33+ProtT5-XL / P100-CPU: ESM2-t12+t30) | Kaggle `fusion-train-real-v1` → `bhumika-tewari-282006/fusionuncertaintynet-{checkpoints,best}` |
+| Serve | HF Space Docker loads `best` via snapshot_download | `/predict` returns `model_version` + provenance |
+| UI | Next.js + 3Dmol AFDB viewer colored by predicted quality | Vercel |
+Synthetic generator remains **TEST-ONLY** (training/scripts/dataset.py).
