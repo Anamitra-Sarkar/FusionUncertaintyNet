@@ -199,24 +199,36 @@ def ece(conf, acc_, n_bins=10):
             e += abs(conf[m].mean() - acc_[m].mean()) * m.sum()/len(conf)
     return float(e)
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--manifest", required=True)         # local merged jsonl
-    ap.add_argument("--n-samples", type=int, default=8000)
-    ap.add_argument("--max-len", type=int, default=350)
-    ap.add_argument("--epochs", type=int, default=10)
-    ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--out", default="/kaggle/working/checkpoints")
-    ap.add_argument("--hf-token", default=os.getenv("HF_TOKEN"))
-    ap.add_argument("--hf-repo", default="bhumika-tewari-282006/fusionuncertaintynet-checkpoints")
-    ap.add_argument("--hf-best-repo", default="bhumika-tewari-282006/fusionuncertaintynet-best")
-    args = ap.parse_args()
+def main(**kw):
+    if not kw:
+        import argparse
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--manifest", required=True)
+        ap.add_argument("--n-samples", type=int, default=8000)
+        ap.add_argument("--max-len", type=int, default=350)
+        ap.add_argument("--epochs", type=int, default=10)
+        ap.add_argument("--lr", type=float, default=1e-4)
+        ap.add_argument("--out", default="./checkpoints")
+        ap.add_argument("--hf-token", default=os.getenv("HF_TOKEN"))
+        ap.add_argument("--hf-repo", default="bhumika-tewari-282006/fusionuncertaintynet-checkpoints")
+        ap.add_argument("--hf-best-repo", default="bhumika-tewari-282006/fusionuncertaintynet-best")
+        a = ap.parse_args()
+        kw = vars(a)
+    manifest      = kw["manifest"]
+    n_samples     = kw.get("n_samples", kw.get("n-samples", 8000))
+    max_len       = kw.get("max_len", 350) or kw.get("max-len", 350)
+    epochs        = kw.get("epochs", 10)
+    lr            = kw.get("lr", 1e-4)
+    out           = kw.get("out", "./checkpoints")
+    hf_token      = kw.get("hf_token") or os.getenv("HF_TOKEN")
+    hf_repo       = kw.get("hf_repo", "bhumika-tewari-282006/fusionuncertaintynet-checkpoints")
+    hf_best_repo  = kw.get("hf_best_repo", "bhumika-tewari-282006/fusionuncertaintynet-best")
 
     device, mode = pick_device()
     print(f"[real-train] device={device} encoder_mode={mode}", flush=True)
 
     items = []
-    with open(args.manifest) as f:
+    with open(manifest) as f:
         for line in f:
             if line.strip():
                 items.append(json.loads(line))
@@ -224,16 +236,16 @@ def main():
 
     encoders = RealEncoders(mode, device)
     train, val = build_split(items, encoders, device,
-                             max_len=args.max_len, limit=args.n_samples)
+                             max_len=max_len, limit=n_samples)
     print(f"[real-train] proteins train={len(train)} val={len(val)} "
           f"(residues x{len(train)*len(train[0]['y'])})", flush=True)
 
     model = FusionUncertaintyNet(d_fused=512).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
 
     best_corr, hist = -1.0, []
-    for ep in range(1, args.epochs + 1):
+    for ep in range(1, epochs + 1):
         tr_loss, tr_r, _, _ = run_epoch(model, train, device, opt=opt)
         va_loss, va_r, vp, vt = run_epoch(model, val, device)
         sched.step()
@@ -242,21 +254,22 @@ def main():
         print(f"[epoch {ep}] train {tr_loss:.3f} | val {va_loss:.3f} "
               f"| pearson {va_r:.4f}", flush=True)
 
-        ck = f"{args.out}/epoch-{ep}"
+        ck = f"{out}/epoch-{ep}"
         os.makedirs(ck, exist_ok=True)
         model.save_pretrained(ck)
         json.dump({"encoder_mode": mode, "history": hist}, open(f"{ck}/metrics.json", "w"), indent=2)
-        _push(ck, args.hf_repo, args.hf_token)
+        _push(ck, hf_repo, hf_token)
         if va_r > best_corr:
             best_corr = va_r
-            bk = f"{args.out}/best"
+            bk = f"{out}/best"
             os.makedirs(bk, exist_ok=True)
             model.save_pretrained(bk)
             json.dump({"best_val_pearson": best_corr, "encoder_mode": mode,
+                       "n_train_proteins": len(train), "n_val_proteins": len(val),
                        "history": hist,
                        "ece": ece(vp.clamp(1,100)/100, vt.clamp(1,100)/100)},
                       open(f"{bk}/metrics.json", "w"), indent=2)
-            _push(bk, args.hf_best_repo, args.hf_token)
+            _push(bk, hf_best_repo, hf_token)
 
     print(f"[real-train] DONE best_val_pearson={best_corr:.4f}", flush=True)
 
