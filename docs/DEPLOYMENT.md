@@ -30,3 +30,11 @@
 - Reuse `cabbage-guard` project to allow SSO across 35 apps
 - Web SDK uses public apiKey; Admin SDK only on Render via base64
 - Namespaced collections prevent cross-app collision
+
+## Firestore Rules (multi-app safety)
+`firestore.rules` in-repo covers only `fusion_*` collections. Deploying it verbatim would
+replace PROJECT-WIDE rules on shared `cabbage-guard` and break sibling apps (deny-all tail).
+Decision: backend uses Firebase Admin SDK (bypasses rules); client never touches Firestore
+directly. A ruleset was staged (`projects/cabbage-guard/rulesets/0cddb3fc-…`) but NOT released.
+If direct client access is ever needed, merge per-app match blocks into one project ruleset
+and release via console with Owner permissions.
