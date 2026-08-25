@@ -253,7 +253,7 @@ _pdb_cache = _PDBCache()
 def get_afdb_pdb(acc: str):
     """Resolve latest AlphaFold model PDB for a UniProt accession (real AFDB)."""
     import re as _re, time as _time
-    if not _re.fullmatch(r"[A-NR-Z][0-9][A-Z0-9]{4}[0-9A-Z]|[A-NR-Z][0-9][A-Z][A-Z0-9]{3}[0-9]", acc or ""):
+    if not _re.fullmatch(r"[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2}", acc or ""):
         raise HTTPException(status_code=400, detail="Invalid UniProt accession")
     now = _time.time()
     if not (_pdb_cache.url and now - _pdb_cache.ts < 86400 and _pdb_cache.url.endswith(acc)):

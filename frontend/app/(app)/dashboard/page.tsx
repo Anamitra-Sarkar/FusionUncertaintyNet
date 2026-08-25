@@ -28,7 +28,7 @@ export default function Dashboard() {
     try {
       const cleaned = seq.replace(/[^ACDEFGHIKLMNPQRSTVWY]/gi, "").toUpperCase();
       if (cleaned.length < 10) throw new Error("Sequence too short (need ≥10)");
-      if (acc && !/^[A-NR-Z][0-9][A-Z0-9]{4}[0-9A-Z]$|^([A-NR-Z][0-9][A-Z][A-Z0-9]{3}[0-9])$/.test(acc.trim()))
+      if (acc && !/^([OPQ][0-9][A-Z0-9]{3}[0-9])|([A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})$/.test(acc.trim()))
         throw new Error("Invalid UniProt accession");
       const data = await predict({ sequence: cleaned });
       setRes(data);
