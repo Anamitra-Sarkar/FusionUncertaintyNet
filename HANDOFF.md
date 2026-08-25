@@ -1,7 +1,6 @@
 # Agent Handoff — FusionUncertaintyNet
 
-**Date:** 2026-08-24 08:30 UTC  
-**Repo:** `https://github.com/Anamitra-Sarkar/FusionUncertaintyNet` `main:7aa1e4e`  
+**Date:** 2026-08-25 · **Repo:** `main:3b4e29a` · STATUS: fully real pipeline running  
 **Mode:** Build (was Plan, now Build) — you may edit, run, deploy.
 
 ## What Has Been Done (Verified Live)
@@ -75,3 +74,25 @@ python3 data-pipeline/fetch_real.py --n 20 --fetch 50  # test real fetcher
 ```
 
 **Build mode is now active** — you may edit, run, and deploy directly.
+
+
+---
+
+## UPDATE 2026-08-25 — Real Pipeline Live
+
+- **Data**: `data-pipeline/fetch_real.py` fetches REAL per-residue pLDDT from AlphaFold DB v6 PDB B-factors (verified P69905 142/142), UniProt cursor pagination over ~570k Swiss-Prot accessions.
+- **Kaggle `fusion-data-501k-afdb-real-fetch`** (RUNNING): shards of 5k → `hf.co/datasets/bhumika-tewari-282006/fusion-afdb-quality-real` (`manifest_shard_*.jsonl`). Shard 000 = 4,858 REAL proteins (len 30–1022).
+- **Kaggle `fusion-train-real-v1`** (RUNNING): polls dataset ≥4k rows → dual-path REAL training:
+  - T4/GPU(sm≥70): frozen ESM2-t33-650M fp16 + ProtT5-XL fp16 (paper-faithful)
+  - P100/CPU(sm_60): frozen ESM2-t12-35M(→pad1280) + t30-150M(→pad1024) — real pretrained PLMs, documented in metrics.json
+  - K=64 residue slices/protein (memory-bounded), md5 accession split, pushes epoch ckpts → `fusionuncertaintynet-checkpoints`, best → `-best`
+- **UI**: `components/viewer.tsx` 3Dmol AFDB cartoon colored by predicted quality (B-factor overwritten); dashboard optional accession field.
+- **Lite**: `/api/pdb?acc=` resolves latest AFDB version (canonical UniProt regex fixed).
+- **Firestore rules**: staged ruleset but NOT released — project-wide deny-all tail would break sibling apps; Admin SDK bypasses rules (see docs/DEPLOYMENT.md).
+
+### After train completes
+```
+curl -X POST -H "Authorization: Bearer $HF_TOKEN" \
+  https://huggingface.co/api/spaces/bhumika-tewari-282006/fusionuncertaintynet-heavy/restart
+# then verify /health -> model_loaded:true and /predict reflects trained weights
+```
