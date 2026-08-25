@@ -15,7 +15,7 @@
 - **GitHub:** `Anamitra-Sarkar/FusionUncertaintyNet` public, `CI` ✅ `5a62329`, `sync-hf-space.yml` only `backend-heavy/**, training/**` → `bhumika-tewari-282006/fusionuncertaintynet-heavy`.
 - **HF Heavy (Docker, `bhumika-tewari-282006` from `bhumika-hf.txt`):** `https://bhumika-tewari-282006-fusionuncertaintynet-heavy.hf.space` `RUNNING` `cpu` `model_loaded` toggles with `snapshot_download` `bhumika-tewari-282006/fusionuncertaintynet-best` fallback. `Dockerfile: pytorch:2.3.1-cuda12.1`.
 - **Lite (Render, `Kakali's workspace` `tea-d8t287ojs32c73d36jog`):** `https://fusionuncertaintynet-lite.onrender.com` `srv-da5ubegu01pc738hspd0` `live` `7820aa6`, `buildFilter: ["backend-lite/**"]` (fixed), env `HF_SPACE_URL`, `GROQ_API_KEY` (`openai/gpt-oss-20b` verified), `FIREBASE_ADMIN_JSON_BASE64` (`cabbage-guard` `07fc830b13`), `HEAVY_SHARED_SECRET`. Health `firebase:true`.
-- **Frontend (Vercel, `team_gXozpOHE3KrJsdcyHVaspIRG`):** `https://fusionuncertaintynet-anamitra-sarkars-projects.vercel.app` `prj_hwV3Tn0oj6TlOKWfmsa13y2jj0hG` `nextjs 14` `rootDirectory:frontend` `READY`, env `NEXT_PUBLIC_FIREBASE_*` (`cabbage-guard`) + `NEXT_PUBLIC_LITE_URL` (Render). SSO disabled `ssoProtection:null`.
+- **Frontend (Vercel, `team_gXozpOHE3KrJsdcyHVaspIRG`):** `https://protein-reliability.vercel.app` `prj_hwV3Tn0oj6TlOKWfmsa13y2jj0hG` `nextjs 14` `rootDirectory:frontend` `READY`, env `NEXT_PUBLIC_FIREBASE_*` (`cabbage-guard`) + `NEXT_PUBLIC_LITE_URL` (Render). SSO disabled `ssoProtection:null`.
 - **HF Datasets/Models (`bhumika-tewari-282006`):** `fusion-afdb-quality` (`manifest.jsonl` 500 synthetic), `fusion-afdb-quality-real` (placeholder), `fusionuncertaintynet-checkpoints`/`best` (`pytorch_model.bin` 2.27M dummy).
 
 ### 3. Firebase/Firestore (Fixed)
@@ -69,7 +69,7 @@ git log --oneline -5
 kaggle kernels status anamitrasarkar007/fusionuncertaintynet-p100-training-v5
 curl -s https://fusionuncertaintynet-lite.onrender.com/health | jq .
 curl -s https://bhumika-tewari-282006-fusionuncertaintynet-heavy.hf.space/health | jq .
-curl -s https://fusionuncertaintynet-anamitra-sarkars-projects.vercel.app | grep -o FusionUncertaintyNet | head
+curl -s https://protein-reliability.vercel.app | grep -o FusionUncertaintyNet | head
 python3 data-pipeline/fetch_real.py --n 20 --fetch 50  # test real fetcher
 ```
 
