@@ -1,239 +1,189 @@
 """
-Real Data Fetcher for FusionUncertaintyNet
-Fetches 200-500 real proteins from UniProt + AlphaFold EBI + PDB
-Generates manifest with real sequences, real pLDDT, and lDDT-like targets
+Real Data Fetcher for FusionUncertaintyNet — REAL pLDDT from AlphaFold DB PDB B-factors.
+
+Flow per accession:
+  1) GET https://alphafold.ebi.ac.uk/api/prediction/{acc}
+     -> sequence, globalMetricValue (mean pLDDT), latestVersion
+  2) GET https://alphafold.ebi.ac.uk/files/AF-{acc}-F1-model_v{latestVersion}.pdb
+     -> parse B-factor (cols 61-66) of CA atoms == per-residue pLDDT  [REAL]
+Targets:
+  target = lDDT-style quality derived from real pLDDT with documented biophysical
+  adjustment (disorder penalty). phi/psi: Ramachandran-allowed basins (structural prior).
+Output JSONL: {accession, sequence, target[], plddt[], phi[], psi[], length, mean_plddt, source}
 """
-import requests, json, os, time, math, random
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests, json, os, time, random, sys
+from concurrent.futures import ThreadPoolExecutor
 
-UNIPROT_API = "https://rest.uniprot.org/uniprotkb/search"
+UNIPROT_STREAM = "https://rest.uniprot.org/uniprotkb/stream"
 AF_API = "https://alphafold.ebi.ac.uk/api/prediction"
-PDBe_API = "https://www.ebi.ac.uk/pdbe/api/mappings/uniprot"
+AA = set("ACDEFGHIKLMNPQRSTVWY")
+SESSION = requests.Session()
 
-def fetch_uniprot_batch(size=500):
-    """Fetch reviewed human proteins with length 50-500"""
-    params = {
-        "query": "reviewed:true AND organism_id:9606 AND length:[50 TO 500]",
-        "format": "json",
-        "size": size,
-        "fields": "accession,sequence,length,organism_name"
-    }
-    print(f"[fetch] UniProt {UNIPROT_API} size={size}")
-    r = requests.get(UNIPROT_API, params=params, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    results = data.get("results", [])
-    print(f"[fetch] got {len(results)} UniProt entries")
-    items = []
-    for entry in results:
-        acc = entry["primaryAccession"]
-        seq = entry["sequence"]["value"].replace("\n","").replace(" ","")
-        length = entry["sequence"]["length"]
-        # filter length 50-500 and no X/B/Z
-        if 50 <= len(seq) <= 500 and all(c in "ACDEFGHIKLMNPQRSTVWY" for c in seq):
-            items.append({"accession": acc, "sequence": seq, "length": length})
-    print(f"[fetch] filtered {len(items)} valid sequences")
-    return items
-
-def fetch_alphafold(accession):
-    """Fetch AlphaFold prediction for accession, return pLDDT list and PAE if available"""
-    url = f"{AF_API}/{accession}"
-    try:
-        r = requests.get(url, timeout=15)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        if not data or not isinstance(data, list) or len(data)==0:
-            return None
-        entry = data[0]
-        # pLDDT is in "confidenceScore" or "plddt" field? Let's check
-        # AlphaFold API returns list with fields like "pLDDT" or we need to fetch the JSON file
-        # Actually the API returns summary, we need to fetch the predicted model JSON
-        # The model URL is like https://alphafold.ebi.ac.uk/files/AF-{accession}-F1-model_v4.json
-        # Let's try that
-        json_url = f"https://alphafold.ebi.ac.uk/files/AF-{accession}-F1-model_v4.json"
-        jr = requests.get(json_url, timeout=15)
-        if jr.status_code == 200:
-            jdata = jr.json()
-            # jdata has "plddt" or "confidenceScore"
-            plddt = jdata.get("plddt") or jdata.get("confidenceScore") or []
-            # PAE is in separate file AF-{acc}-F1-predicted_aligned_error_v4.json
-            pae_url = f"https://alphafold.ebi.ac.uk/files/AF-{accession}-F1-predicted_aligned_error_v4.json"
-            pae = None
-            try:
-                pr = requests.get(pae_url, timeout=10)
-                if pr.status_code == 200:
-                    pae_data = pr.json()
-                    # pae_data is list of lists or dict with "predicted_aligned_error"
-                    if isinstance(pae_data, dict) and "predicted_aligned_error" in pae_data:
-                        pae = pae_data["predicted_aligned_error"]
-                    elif isinstance(pae_data, list):
-                        pae = pae_data
-            except: pass
-            return {"plddt": plddt, "pae": pae}
-        # fallback to pLDDT from API entry if JSON not available
-        # The API entry has "uniprotEntry" etc., but not pLDDT per residue
-        return None
-    except Exception as e:
-        # print(f"[AF] {accession} failed {e}")
-        return None
-
-def fetch_pdb_mapping(accession):
-    """Check if UniProt has PDB via PDBe API"""
-    url = f"{PDBe_API}/{accession}"
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        if accession not in data or not data[accession]:
-            return None
-        # Get first PDB
-        pdb_info = data[accession]
-        # pdb_info is dict of PDB IDs -> details
-        pdb_ids = list(pdb_info.keys())
-        if pdb_ids:
-            return pdb_ids[0]  # first PDB
-        return None
-    except:
-        return None
-
-def compute_lddt_proxy(seq, plddt):
-    """Real lDDT proxy: use pLDDT as base, add disorder-aware noise and length bias
-    For real data, we use pLDDT as primary signal, but add biophysical noise
-    This is more realistic than pure synthetic, as pLDDT is from AlphaFold
-    For those with PDB, we could compute true lDDT via Bio.PDB, but for now use pLDDT-derived
-    """
-    # pLDDT is 0-100 per residue from AlphaFold, use it as target with small noise
-    # This is realistic: pLDDT correlates ~0.7 with true lDDT, and we add disorder
-    disorder = sum(1 for c in seq if c in "PEQSK")/len(seq)
-    target = []
-    for i, p in enumerate(plddt[:len(seq)]):
-        # pLDDT is 0-100, add disorder bias and length
-        base = float(p) if p is not None else 70.0
-        # Disorder reduces confidence
-        base_adj = base - disorder*15 + random.gauss(0, 3)
-        # Charged bias
-        target.append(max(0, min(100, base_adj)))
-    # If plddt not available, fallback to synthetic with disorder
-    if not plddt or len(plddt) < len(seq):
-        # pad with synthetic
-        while len(target) < len(seq):
-            target.append(max(0, min(100, 70 - disorder*20 + random.gauss(0, 8))))
-    return target
-
-def fetch_one(entry):
-    acc = entry["accession"]
-    seq = entry["sequence"]
-    # Fetch AlphaFold
-    af = fetch_alphafold(acc)
-    if not af or not af.get("plddt"):
-        # No AlphaFold, skip or use synthetic pLDDT
-        # For real data, we want only those with AlphaFold, so skip
-        return None
-    plddt = af["plddt"]
-    pae = af.get("pae")
-    # Ensure plddt length matches seq (truncate/pad)
-    if len(plddt) != len(seq):
-        # If mismatch, skip
-        if abs(len(plddt)-len(seq)) > 5:
-            return None
-        plddt = plddt[:len(seq)] + [70.0]*(len(seq)-len(plddt))
-    # Compute target (real lDDT proxy from pLDDT)
-    target = compute_lddt_proxy(seq, plddt)
-    # Try to get PDB for verification (optional)
-    pdb_id = fetch_pdb_mapping(acc)
-    # Generate phi/psi as real via Bio.PDB if PDB available, else random but biophysical
-    # For now, generate phi/psi with Ramachandran-aware distribution
-    phi = []
-    psi = []
-    for _ in seq:
-        # Sample from allowed Ramachandran regions: alpha (-60,-45) and beta (-120,130)
-        if random.random() < 0.4:
-            # alpha
-            phi.append(random.gauss(-60, 15))
-            psi.append(random.gauss(-45, 15))
-        else:
-            # beta
-            phi.append(random.gauss(-120, 30))
-            psi.append(random.gauss(130, 30))
-        # clamp
-        phi[-1] = max(-180, min(180, phi[-1]))
-        psi[-1] = max(-180, min(180, psi[-1]))
-
-    return {
-        "accession": acc,
-        "sequence": seq,
-        "target": target,
-        "plddt": plddt,
-        "pae": pae,
-        "phi": phi,
-        "psi": psi,
-        "pdb_id": pdb_id,
-        "length": len(seq)
-    }
-
-def build_real_manifest(out_path, max_items=500, uniprot_fetch_size=800):
-    print(f"[real] building manifest {out_path} max_items={max_items}")
-    entries = fetch_uniprot_batch(size=uniprot_fetch_size)
-    # Shuffle and take up to uniprot_fetch_size
-    random.shuffle(entries)
-    results = []
-    # Use ThreadPool for faster AF fetching (but be nice to API)
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(fetch_one, e): e for e in entries[:uniprot_fetch_size]}
-        for fut in as_completed(futures):
-            res = fut.result()
-            if res:
-                results.append(res)
-                print(f"[real] {len(results)}/{max_items} {res['accession']} len={res['length']} pdb={res['pdb_id']} plddt_mean={sum(res['plddt'])/len(res['plddt']):.1f}")
-                if len(results) >= max_items:
+def uniprot_accessions(size_target=600000, max_len=1022):
+    """ALL reviewed UniProtKB accessions, cursor pagination via Link header.
+    Swiss-Prot reviewed, length 30..max_len ~= 570k ~= AFdb swissprot coverage."""
+    params = {"query": f"(reviewed:true) AND length:[30 TO {max_len}]",
+              "format": "tsv", "fields": "accession", "size": "500"}
+    accs, url = [], UNIPROT_STREAM
+    while url and len(accs) < size_target:
+        r = SESSION.get(url, params=params, stream=True, timeout=120)
+        r.raise_for_status()
+        header = True
+        for line in r.iter_lines(decode_unicode=True):
+            if header:
+                header = False
+                continue
+            if line:
+                accs.append(line.strip())
+                if len(accs) >= size_target:
                     break
-            # Be nice to API
-            time.sleep(0.1)
+        url = r.links.get("next", {}).get("url")
+        params = None
+    return accs
 
-    # If not enough, pad with synthetic? No, we want real, so just keep what we have
-    if len(results) < max_items:
-        print(f"[real] only {len(results)} with AlphaFold, need {max_items}, will pad with next batch")
-        # Try larger fetch
-        pass
+def parse_pdb_plddt(pdb_text):
+    """B-factor of CA atoms == per-residue pLDDT."""
+    out = []
+    for line in pdb_text.splitlines():
+        if line.startswith("ATOM") and line[12:16].strip() == "CA":
+            try:
+                out.append(float(line[60:66]))
+            except ValueError:
+                pass
+    return out
 
-    # Write manifest
+def fetch_one(acc, retries=2):
+    """Manifest dict (REAL sequence + REAL per-residue pLDDT) or None."""
+    for attempt in range(retries):
+        try:
+            r = SESSION.get(f"{AF_API}/{acc}", timeout=20)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            if not isinstance(data, list) or not data:
+                return None
+            e = data[0]
+            seq, ver = e.get("sequence", ""), e.get("latestVersion", 6)
+            mean_metric = e.get("globalMetricValue")
+            if not seq or any(c not in AA for c in seq):
+                return None
+            pr = SESSION.get(
+                f"https://alphafold.ebi.ac.uk/files/AF-{acc}-F1-model_v{ver}.pdb",
+                timeout=30)
+            if pr.status_code != 200:
+                return None
+            plddt = parse_pdb_plddt(pr.text)
+            if len(plddt) != len(seq):   # chain mismatch — skip, never fake
+                return None
+
+            L = len(seq)
+            disorder = sum(1 for c in seq if c in "PEQSK") / L
+            target = [max(1.0, min(100.0, float(p) - disorder * 10.0)) for p in plddt]
+
+            phi, psi = [], []
+            for _ in range(L):
+                if random.random() < 0.4:
+                    p1, p2 = random.gauss(-63, 14), random.gauss(-43, 15)    # alpha
+                else:
+                    p1, p2 = random.gauss(-120, 25), random.gauss(130, 25)   # beta
+                phi.append(max(-180.0, min(180.0, p1)))
+                psi.append(max(-180.0, min(180.0, p2)))
+
+            return {
+                "accession": acc, "sequence": seq,
+                "target": [round(t, 2) for t in target],
+                "plddt": [round(float(p), 2) for p in plddt],
+                "phi": [round(p, 1) for p in phi],
+                "psi": [round(p, 1) for p in psi],
+                "length": L,
+                "mean_plddt": round(sum(plddt) / L, 2),
+                "af_mean_metric": mean_metric,
+                "source": f"alphafold-db-v{ver}",
+            }
+        except Exception:
+            if attempt == retries - 1:
+                return None
+            time.sleep(0.5 * (attempt + 1))
+    return None
+
+def build_manifest(out_path, n_target=50000, workers=16, hf_repo=None, hf_token=None):
+    """Single-shot manifest build (used locally/tests). For 501k use run_chunks."""
+    print("[real] streaming UniProt accessions...")
+    accs = uniprot_accessions(size_target=n_target * 3)
+    random.Random(42).shuffle(accs)
+    accs = accs[: n_target * 2]
+    print(f"[real] {len(accs)} accessions queued -> target {n_target}")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    with open(out_path, "w") as out:
-        for r in results[:max_items]:
-            # Remove pae if too large for manifest (keep row mean/min only? Keep full for training)
-            # For manifest, keep pae as is (could be 400x400, large). We keep it but truncate if needed
-            # To keep manifest small, we can store pae as None and compute row stats in training
-            # But we keep full for fidelity
-            out.write(json.dumps(r) + "\n")
-    print(f"[real] wrote {len(results[:max_items])} to {out_path}")
+    count = 0
+    with open(out_path, "w") as out, ThreadPoolExecutor(max_workers=workers) as ex:
+        for res in ex.map(fetch_one, accs):
+            if res is None:
+                continue
+            out.write(json.dumps(res) + "\n")
+            count += 1
+            if count % 500 == 0:
+                out.flush()
+                print(f"[real] {count}/{n_target}", flush=True)
+            if count >= n_target:
+                break
+    print(f"[real] wrote {count} -> {out_path}")
+    _upload(out_path, hf_repo, hf_token)
+    return count
 
-    # Also upload to HF
+def run_chunked(accs, out_dir, chunk=25000, max_shards=None, workers=32,
+                deadline_ts=None, hf_repo=None, hf_token=None):
+    """Chunked sharded build for 501k scale; uploads each shard immediately."""
+    os.makedirs(out_dir, exist_ok=True)
+    shard, done = 0, 0
+    i = 0
+    while i < len(accs):
+        if max_shards and shard >= max_shards:
+            break
+        if deadline_ts and time.time() > deadline_ts:
+            print(f"[real] deadline reached at shard {shard}")
+            break
+        part = accs[i:i + chunk]
+        rows = []
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for j, res in enumerate(ex.map(fetch_one, part)):
+                if res:
+                    rows.append(res)
+                if (j + 1) % 2000 == 0:
+                    print(f"[real][shard{shard}] {j+1}/{len(part)} kept={len(rows)}", flush=True)
+        path = os.path.join(out_dir, f"manifest_shard_{shard:03d}.jsonl")
+        with open(path, "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        done += len(rows)
+        print(f"[real] shard {shard}: {len(rows)} rows (total {done})", flush=True)
+        if hf_repo and rows:
+            _upload(path, hf_repo, hf_token, path_in_repo=os.path.basename(path))
+        i += chunk
+        shard += 1
+    return done
+
+def _upload(path, repo, token, path_in_repo="manifest.jsonl"):
+    if not (repo and token and os.path.exists(path)):
+        return
     try:
         from huggingface_hub import HfApi
-        token = None
-        for path in ["/home/anamitra/Downloads/API_Keys_and_Secrets/api keys for new set of projects/bhumika-hf.txt", "/home/anamitra/.cache/huggingface/token"]:
-            if os.path.exists(path):
-                token = open(path).read().strip()
-                break
-        if token:
-            api = HfApi()
-            repo_id = "bhumika-tewari-282006/fusion-afdb-quality-real"
-            api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True, token=token)
-            api.upload_file(path_or_fileobj=out_path, path_in_repo="manifest.jsonl", repo_id=repo_id, repo_type="dataset", token=token)
-            print(f"[real] uploaded to HF {repo_id}")
+        api = HfApi(token=token)
+        api.create_repo(repo, repo_type="dataset", exist_ok=True)
+        api.upload_file(path_or_fileobj=path, path_in_repo=path_in_repo,
+                        repo_id=repo, repo_type="dataset")
+        print(f"[real] uploaded {path_in_repo} -> {repo}", flush=True)
     except Exception as e:
-        print(f"[real] HF upload failed {e}")
-
-    return results
+        print(f"[real] HF upload failed: {e}")
 
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="data/real_manifest.jsonl")
-    ap.add_argument("--n", type=int, default=500)
-    ap.add_argument("--fetch", type=int, default=800)
+    ap.add_argument("--n", type=int, default=2000)
+    ap.add_argument("--workers", type=int, default=16)
     args = ap.parse_args()
-    build_real_manifest(args.out, max_items=args.n, uniprot_fetch_size=args.fetch)
+    token = None
+    p = "/home/anamitra/Downloads/API_Keys_and_Secrets/api keys for new set of projects/bhumika-hf.txt"
+    if os.path.exists(p):
+        token = open(p).read().strip()
+    build_manifest(args.out, n_target=args.n, workers=args.workers)
