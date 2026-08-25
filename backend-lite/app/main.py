@@ -243,6 +243,46 @@ Task: Provide concise, factual assessment (3 bullet points + 1 paragraph) coveri
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Groq error: {e}")
 
+
+class _PDBCache:
+    ts: float = 0.0
+    url: str = ""
+_pdb_cache = _PDBCache()
+
+@app.get("/api/pdb")
+def get_afdb_pdb(acc: str):
+    """Resolve latest AlphaFold model PDB for a UniProt accession (real AFDB)."""
+    import re as _re, time as _time
+    if not _re.fullmatch(r"[A-NR-Z][0-9][A-Z0-9]{4}[0-9A-Z]|[A-NR-Z][0-9][A-Z][A-Z0-9]{3}[0-9]", acc or ""):
+        raise HTTPException(status_code=400, detail="Invalid UniProt accession")
+    now = _time.time()
+    if not (_pdb_cache.url and now - _pdb_cache.ts < 86400 and _pdb_cache.url.endswith(acc)):
+        try:
+            r = httpx.get(f"https://alphafold.ebi.ac.uk/api/prediction/{acc}", timeout=15)
+            if r.status_code != 200:
+                raise HTTPException(status_code=404, detail="No AlphaFold model")
+            meta = r.json()[0]
+            ver = meta.get("latestVersion", 6)
+            _pdb_cache.url = f"https://alphafold.ebi.ac.uk/files/AF-{acc}-F1-model_v{ver}.pdb"
+            _pdb_cache.ts = now
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"AFDB unreachable: {e}")
+    try:
+        pr = httpx.get(_pdb_cache.url, timeout=30)
+        if pr.status_code != 200:
+            raise HTTPException(status_code=404, detail="Model file missing")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Fetch failed: {e}")
+    from fastapi import Response
+    return Response(content=pr.text, media_type="text/plain",
+                    headers={"Access-Control-Allow-Origin": "*",
+                             "Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/api/me")
 def me(user=Depends(verify_token)):
     return {"uid": user.get("uid"), "email": user.get("email")}

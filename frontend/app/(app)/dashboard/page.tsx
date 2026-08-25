@@ -7,6 +7,7 @@ import { predict, explain } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import StructureViewer from "@/components/viewer";
 
 export default function Dashboard() {
   const [seq, setSeq] = useState("MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDNPLDAELLAQLGVD");
@@ -14,6 +15,7 @@ export default function Dashboard() {
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState("");
   const [explanation, setExplanation] = useState("");
+  const [acc, setAcc] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -26,6 +28,8 @@ export default function Dashboard() {
     try {
       const cleaned = seq.replace(/[^ACDEFGHIKLMNPQRSTVWY]/gi, "").toUpperCase();
       if (cleaned.length < 10) throw new Error("Sequence too short (need ≥10)");
+      if (acc && !/^[A-NR-Z][0-9][A-Z0-9]{4}[0-9A-Z]$|^([A-NR-Z][0-9][A-Z][A-Z0-9]{3}[0-9])$/.test(acc.trim()))
+        throw new Error("Invalid UniProt accession");
       const data = await predict({ sequence: cleaned });
       setRes(data);
     } catch (e:any) { setErr(e.message); } finally { setLoading(false); }
@@ -56,6 +60,9 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <Button onClick={run} disabled={loading}>{loading?"Running…":"Run FusionUncertaintyNet"}</Button>
             <span className="text-xs text-muted">{seq.replace(/[^A-Za-z]/g,"").length} aa</span>
+            <input value={acc} onChange={e=>setAcc(e.target.value)}
+                   placeholder="UniProt acc (optional, for 3D)"
+                   className="ml-auto w-56 rounded-full border border-line bg-card px-4 py-2 text-sm focus:outline-none focus:border-accent" />
           </div>
           {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl p-3">{err}</div>}
         </CardContent>
@@ -102,6 +109,25 @@ export default function Dashboard() {
               <div className="text-xs text-muted border-t border-line pt-3">Ramachandran outliers: {res.ramachandran_outliers} (proxy via uncertainty+φψ penalty) · Model: {res.model_version}</div>
             </CardContent>
           </Card>
+
+          {acc.trim() && (
+            <Card className="md:col-span-3">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Structure — colored by FusionUncertaintyNet quality</span>
+                  <a className="text-xs text-accent hover:underline"
+                     href={`https://alphafold.ebi.ac.uk/api/prediction/${acc.trim()}`} target="_blank" rel="noreferrer">
+                    AFDB entry ↗</a>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <StructureViewer
+                  pdbUrl={`https://fusionuncertaintynet-lite.onrender.com/api/pdb?acc=${acc.trim()}`}
+                  quality={res.residues.map((r:any)=>r.pred_quality)}
+                />
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>
