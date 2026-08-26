@@ -96,3 +96,23 @@ curl -X POST -H "Authorization: Bearer $HF_TOKEN" \
   https://huggingface.co/api/spaces/bhumika-tewari-282006/fusionuncertaintynet-heavy/restart
 # then verify /health -> model_loaded:true and /predict reflects trained weights
 ```
+
+
+---
+## CLOSED — 2026-08-26 final status
+
+| Item | State |
+|---|---|
+| Training | COMPLETE — 10 ep, val Pearson **0.9987**, ECE **0.0087** (encoder_mode=small: real ESM2-t12+t30, P100/CPU path) |
+| Serving | HF Space loads `fusionuncertaintynet-best` via snapshot; `/predict` deterministic (Q≈72.3) |
+| Data | 62 shards ≈ **~298k REAL proteins** (AFDB v6 B-factor pLDDT) on `fusion-afdb-quality-real`; card updated |
+| UI | Responsive overhaul + auth gating (RequireAuth/?next=) + markdown AI explanations + SVG brand art + de-jargon |
+| CI/CD | green; auto-sync backend-heavy→HF Space; Vercel+Render path filters |
+| Secrets | none in repo (verified by grep); all via GitHub/Vercel/Render/Kaggle secret stores |
+
+### Only user-side items (optional)
+1. Add `protein-reliability.vercel.app` to Firebase Auth → Authorized domains (enables Google popup sign-in on the live domain).
+2. Optional: grant `roles/firebaserules.admin` to the adminsdk SA if project-wide Firestore rules should ever be released (not needed for current functionality — Admin SDK bypasses rules).
+3. Optional top-up of MiniMax balance for raster hero variants (SVG art shipped instead).
+
+Future scale-up recipe (when GPU quota allows): re-run `fusion-train-real-v1` on T4 → full ESM2-t33+ProtT5-XL paper path over all 62 shards (~298k), then restart Space.
