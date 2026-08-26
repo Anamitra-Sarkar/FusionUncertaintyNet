@@ -4,31 +4,31 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="space-y-16">
-      <section className="grid md:grid-cols-2 gap-10 items-center pt-6">
+    <div className="space-y-12 sm:space-y-16">
+      <section className="grid md:grid-cols-2 gap-10 items-center pt-2 sm:pt-6">
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
           <div className="inline-flex items-center gap-2 text-xs border border-line rounded-full px-3 py-1 bg-card">
             <span className="w-2 h-2 rounded-full bg-accent animate-pulse" /> Adaptive Multi-PLM · Evidential Gamma
           </div>
-          <h1 className="font-serif text-4xl md:text-5xl leading-[1.05] mt-4 tracking-tight">
+          <h1 className="font-serif text-[28px] leading-tight sm:text-4xl sm:leading-[1.05] md:text-5xl leading-[1.05] mt-4 tracking-tight">
             Reliability you can <span className="text-accent italic">trust</span>, not just a score.
           </h1>
           <p className="text-muted mt-4 leading-relaxed">
             FusionUncertaintyNet fuses ESM-2, ProtT5 and AlphaFold priors with a learned gating network, then predicts per-residue quality via Gamma evidential heads — separating aleatoric (disorder) from epistemic (out-of-distribution) uncertainty.
           </p>
-          <div className="flex gap-3 mt-6">
-            <Link href="/dashboard" className="px-6 py-3 rounded-full bg-accent text-white hover:bg-teal-700 transition">Run Prediction</Link>
-            <a href="#science" className="px-6 py-3 rounded-full border border-line bg-card hover:bg-sand transition">How it works</a>
+          <div className="flex flex-col sm:flex-row gap-3 mt-6">
+            <Link href="/dashboard" className="px-6 py-3 rounded-full bg-accent text-white hover:bg-teal-700 transition text-center w-full sm:w-auto">Run Prediction</Link>
+            <a href="#science" className="px-6 py-3 rounded-full border border-line bg-card hover:bg-sand transition text-center w-full sm:w-auto">How it works</a>
           </div>
-          <div className="flex gap-6 mt-8 text-xs text-muted">
+          <div className="flex flex-wrap gap-x-5 gap-y-2 mt-6 sm:mt-8 text-xs text-muted">
             <span>◆ 501k AFdb training</span><span>◆ CASP16 / CAMEO blind</span><span>◆ ECE + Ramachandran</span>
           </div>
         </motion.div>
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }} className="bg-card border border-line rounded-2xl p-6 shadow-sm">
           <div className="text-xs font-medium tracking-widest text-muted">LIVE EXAMPLE</div>
-          <div className="mt-3 font-mono text-sm bg-sand rounded-xl p-4 border border-line">
-            <div className="text-muted text-xs">MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDNPLDAELLAQLGVD</div>
-            <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
+          <div className="mt-3 font-mono text-xs sm:text-sm bg-sand rounded-xl p-4 border border-line overflow-hidden">
+            <div className="text-muted text-[10px] sm:text-xs break-all leading-relaxed">MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDNPLDAELLAQLGVD</div>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3 text-xs">
               <div className="bg-white rounded-lg p-3 border border-line"><div className="text-muted">Global quality</div><div className="text-xl font-serif">84.2<span className="text-sm text-muted">/100</span></div></div>
               <div className="bg-white rounded-lg p-3 border border-line"><div className="text-muted">Uncertainty</div><div className="text-xl font-serif">0.42</div></div>
               <div className="bg-white rounded-lg p-3 border border-line"><div className="text-muted">Gating</div><div className="text-xs leading-tight">ESM 0.42 · ProtT5 0.33 · AF 0.25</div></div>

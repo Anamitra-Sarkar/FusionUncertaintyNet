@@ -28,7 +28,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="max-w-md mx-auto pt-10">
+    <div className="max-w-md mx-auto px-4 pt-6 sm:pt-10">
       <Card>
         <CardHeader>
           <div className="font-serif text-2xl">Welcome back</div>

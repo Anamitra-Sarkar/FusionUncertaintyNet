@@ -13,13 +13,14 @@ declare global { interface Window { $3Dmol?: any } }
 export default function StructureViewer({
   pdbUrl,
   quality,
-  height = 380,
+  height,
 }: {
   pdbUrl?: string | null;
   quality?: number[];
   height?: number;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const glRef = useRef<any>(null);
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState("");
   const [status, setStatus] = useState("");
@@ -56,6 +57,7 @@ export default function StructureViewer({
         if (cancelled || !window.$3Dmol || !host.current) return;
         host.current.innerHTML = "";
         glviewer = window.$3Dmol.createViewer(host.current, { backgroundColor: "#FFFCF8" });
+        glRef.current = glviewer;
         glviewer.addModel(text, "pdb");
         // color by B-factor: red(low) → sand → teal(high); cartoon thickness by confidence
         glviewer.setStyle({}, {
@@ -73,7 +75,14 @@ export default function StructureViewer({
         setErr(e.message || String(e));
       }
     })();
-    return () => { cancelled = true; try { glviewer?.clear(); } catch {} };
+    // keep canvas crisp on rotate / container resize
+    const ro = new ResizeObserver(() => { try { glRef.current?.resize(); } catch {} });
+    if (host.current) ro.observe(host.current);
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+      try { glviewer?.clear(); } catch {}
+    };
   }, [ready, pdbUrl, quality]);
 
   if (!pdbUrl) return null;
@@ -86,8 +95,8 @@ export default function StructureViewer({
         <span className="text-[11px] text-muted">{status || "red = low conf → teal = high conf"}</span>
       </div>
       <div ref={host}
-           style={{ width: "100%", height }}
-           className="rounded-xl border border-line overflow-hidden bg-sand" />
+           style={height ? { width: "100%", height } : undefined}
+           className="h-[280px] sm:h-[380px] lg:h-[440px] w-full rounded-xl border border-line overflow-hidden bg-sand" />
       {err && <div className="text-xs text-red-600 mt-2">Viewer: {err}</div>}
     </div>
   );

@@ -2,6 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 :root { color-scheme: light; }
+html { -webkit-text-size-adjust: 100%; }
 body { background: #FFFCF8; color: #1A1A1A; font-feature-settings: "ss01" 1; }
 ::selection { background: #0F766E; color: white; }
 * { scrollbar-width: thin; scrollbar-color: #E8E0D8 transparent; }
+
+/* iOS notch / Android gesture-bar safe areas */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.px-safe { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+
+/* horizontal scroll affordance for narrow screens */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+@media (max-width: 640px) {
+  .scroll-x {
+    background:
+      linear-gradient(to right, #FFFCF8 30%, rgba(255,252,248,0)),
+      linear-gradient(to left, #FFFCF8 30%, rgba(255,252,248,0)),
+      radial-gradient(#E8E0D8 18%, transparent 19%) right 4px center / 10px 4px repeat-x;
+    background-attachment: local, local, scroll;
+  }
+}
