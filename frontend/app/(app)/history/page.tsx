@@ -1,28 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "@/lib/firebase";
-import { useRouter } from "next/navigation";
 import { history } from "@/lib/api";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import RequireAuth from "@/components/require-auth";
 
 const fmt = (s?: string) => { try { return s ? new Date(s).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}) : ""; } catch { return s || ""; } };
 
-export default function HistoryPage(){
-  const [items,setItems]=useState<any[]>([]); const [err,setErr]=useState(""); const router=useRouter();
+function HistoryInner(){
+  const [items,setItems]=useState<any[]>([]); const [err,setErr]=useState("");
   useEffect(()=>{
-    const unsub=onAuthStateChanged(auth, async (u)=>{
-      if(!u) router.push("/login");
-      else {
-        try{ const r=await history(); setItems(r.items||[]); } catch(e:any){ setErr(e.message); }
-      }
-    });
-    return ()=>unsub();
-  },[router]);
+    (async () => {
+      try{ const r=await history(); setItems(r.items||[]); } catch(e:any){ setErr(e.message); }
+    })();
+  },[]);
   return (
     <div className="space-y-6">
       <h1 className="font-serif text-3xl">History</h1>
-      <div className="text-sm text-muted">Stored in <span className="font-mono">fusion_predictions</span> on <span className="font-mono">cabbage-guard</span>, isolated per UID. Auto-expires per retention policy.</div>
+      <div className="text-sm text-muted">Every analysis you have run, private to your account.</div>
       {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl p-3">{err}</div>}
       <div className="grid gap-3">
         {items.length===0 && <Card><CardContent className="p-8 text-sm text-muted">No predictions yet — run one in Dashboard.</CardContent></Card>}
@@ -37,5 +31,14 @@ export default function HistoryPage(){
         ))}
       </div>
     </div>
+  );
+}
+
+
+export default function HistoryPage() {
+  return (
+    <RequireAuth>
+      <HistoryInner />
+    </RequireAuth>
   );
 }

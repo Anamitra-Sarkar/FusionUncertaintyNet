@@ -1,27 +1,19 @@
 "use client";
 import { useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "@/lib/firebase";
-import { useRouter } from "next/navigation";
 import { predict, explain } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import StructureViewer from "@/components/viewer";
+import RequireAuth from "@/components/require-auth";
 
-export default function Dashboard() {
+function DashboardInner() {
   const [seq, setSeq] = useState("MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDNPLDAELLAQLGVD");
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState("");
   const [explanation, setExplanation] = useState("");
   const [acc, setAcc] = useState("");
-  const router = useRouter();
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => { if (!u) router.push("/login"); });
-    return () => unsub();
-  }, [router]);
 
   const run = async () => {
     setLoading(true); setErr(""); setRes(null); setExplanation("");
@@ -47,7 +39,7 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-serif text-3xl">Predict Reliability</h1>
-        <div className="text-xs text-muted">P100-optimized inference via HF Spaces</div>
+        <div className="text-xs text-muted">Calibrated multi-model AI engine</div>
       </div>
 
       <Card>
@@ -98,7 +90,7 @@ export default function Dashboard() {
               </div>
               <div className="flex flex-col sm:flex-row gap-2 mt-4">
                 <Button variant="outline" onClick={()=>{const blob=new Blob([JSON.stringify(res,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`fusion_${res.length}.json`; a.click();}}className="w-full sm:w-auto justify-center">Download JSON</Button>
-                <Button variant="outline" onClick={doExplain}className="w-full sm:w-auto justify-center">Explain with Groq</Button>
+                <Button variant="outline" onClick={doExplain}className="w-full sm:w-auto justify-center">AI Explanation</Button>
               </div>
               {explanation && <div className="mt-4 bg-sand border border-line rounded-xl p-4 text-sm leading-relaxed whitespace-pre-wrap">{explanation}</div>}
             </CardContent>
@@ -109,7 +101,7 @@ export default function Dashboard() {
               <div className="p-3 bg-sand rounded-xl border border-line"><div className="text-xs text-muted">Global quality</div><div className="text-xl sm:text-2xl font-serif">{res.global_quality.toFixed(1)}<span className="text-base text-muted"> /100</span></div><div className="w-full h-2 bg-line rounded-full mt-2"><div className="h-2 bg-accent rounded-full" style={{width: `${res.global_quality}%`}} /></div></div>
               <div className="p-3 bg-card border border-line rounded-xl"><div className="text-xs text-muted">Uncertainty split</div><div className="text-xs mt-1">Aleatoric captures disorder/noise, epistemic captures OOD. High epistemic → consider experimental validation.</div><div className="mt-2 text-xs font-mono">mean ale { (res.residues.reduce((a:any,b:any)=>a+b.aleatoric,0)/res.residues.length).toFixed(2)} · epi {(res.residues.reduce((a:any,b:any)=>a+b.epistemic,0)/res.residues.length).toFixed(3)}</div></div>
               <div className="p-3 bg-card border border-line rounded-xl"><div className="text-xs text-muted">Adaptive gating</div><div className="mt-2 space-y-1 text-xs">{["ESM-2","ProtT5","AF priors"].map((n,i)=><div key={n} className="flex items-center gap-2"><span className="w-16">{n}</span><div className="flex-1 h-2 bg-line rounded-full"><div className="h-2 bg-accent rounded-full" style={{width: `${(res.gates[i]*100).toFixed(0)}%`}} /></div><span className="font-mono">{res.gates[i].toFixed(2)}</span></div>)}</div></div>
-              <div className="text-xs text-muted border-t border-line pt-3">Ramachandran outliers: {res.ramachandran_outliers} (proxy via uncertainty+φψ penalty) · Model: {res.model_version}</div>
+              <div className="text-xs text-muted border-t border-line pt-3">Geometry check · {res.ramachandran_outliers} residues flagged</div>
             </CardContent>
           </Card>
 
@@ -134,5 +126,14 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+  );
+}
+
+
+export default function Dashboard() {
+  return (
+    <RequireAuth>
+      <DashboardInner />
+    </RequireAuth>
   );
 }

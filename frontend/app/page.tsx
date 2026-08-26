@@ -1,11 +1,16 @@
 "use client";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import AuthCta from "@/components/auth-cta";
 
 export default function Home() {
   return (
     <div className="space-y-12 sm:space-y-16">
-      <section className="grid md:grid-cols-2 gap-10 items-center pt-2 sm:pt-6">
+      <section className="relative grid md:grid-cols-2 gap-10 items-center pt-2 sm:pt-6">
+        <div aria-hidden className="pointer-events-none absolute -top-24 -left-24 w-[420px] h-[420px] rounded-full opacity-60 blur-3xl"
+             style={{background:"radial-gradient(closest-side, rgba(15,118,110,0.14), transparent)"}} />
+        <div aria-hidden className="pointer-events-none absolute -bottom-32 right-0 w-[360px] h-[360px] rounded-full opacity-50 blur-3xl"
+             style={{background:"radial-gradient(closest-side, rgba(232,93,63,0.10), transparent)"}} />
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
           <div className="inline-flex items-center gap-2 text-xs border border-line rounded-full px-3 py-1 bg-card">
             <span className="w-2 h-2 rounded-full bg-accent animate-pulse" /> Adaptive Multi-PLM · Evidential Gamma
@@ -44,7 +49,7 @@ export default function Home() {
 
       <section id="science" className="grid md:grid-cols-3 gap-6">
         {[
-          { t: "Representation", d: "ESM-2 650M (evolution) + ProtT5-XL (motifs) + AF pLDDT/φψ/PAE (structure prior). Frozen PLMs, only fusion+heads trained — fits P100." },
+          { t: "Representation", d: "ESM-2 650M (evolution) + ProtT5-XL (motifs) + AF pLDDT/φψ/PAE (structure prior). Only the fusion core is trained — fast, focused, efficient." },
           { t: "Adaptive Fusion", d: "Gating MLP on length, charged_fraction, disorder (SETH). Learns to down-weight AF priors for disordered proteins, up-weight ESM for long chains." },
           { t: "Evidential Gamma", d: "Dual head: μ & (k,θ). Mean kθ = quality, var kθ² = aleatoric, 1/k = epistemic. Loss MSE + Gamma NLL + Ramachandran. Calibrated via ECE/Brier." },
         ].map((c) => (
@@ -57,10 +62,10 @@ export default function Home() {
 
       <section className="bg-ink text-paper rounded-2xl p-8 flex flex-col md:flex-row items-center justify-between gap-6">
         <div>
-          <div className="font-serif text-2xl">Login is required.</div>
-          <div className="text-sm text-white/60 mt-1">Every prediction is tied to your Firebase identity (cabbage-guard). History, explanations via Groq, and privacy controls live there.</div>
+          <div className="font-serif text-2xl">Your private protein workspace.</div>
+          <div className="text-sm text-white/60 mt-1">Every analysis lives in your own private workspace — full history and AI-powered explanations included.</div>
         </div>
-        <Link href="/login" className="px-6 py-3 rounded-full bg-white text-ink hover:bg-sand transition">Sign in to continue →</Link>
+        <AuthCta />
       </section>
     </div>
   );
