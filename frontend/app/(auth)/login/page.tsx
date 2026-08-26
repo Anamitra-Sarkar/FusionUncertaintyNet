@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { MoleculeMark } from "@/components/art";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -36,7 +37,10 @@ export default function LoginPage() {
 
   return (
     <div className="max-w-md mx-auto px-4 pt-6 sm:pt-10">
-      <Card>
+      <Card className="overflow-hidden">
+        <div className="bg-sand/70 border-b border-line px-6 pt-4">
+          <MoleculeMark className="w-full h-16" id="login" />
+        </div>
         <CardHeader>
           <div className="font-serif text-2xl">Welcome back</div>
           <div className="text-sm text-muted">Run calibrated protein-reliability predictions in your own private workspace.</div>

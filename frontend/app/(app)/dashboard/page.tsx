@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import StructureViewer from "@/components/viewer";
+import RichText from "@/components/rich-text";
+import { MoleculeMark } from "@/components/art";
 import RequireAuth from "@/components/require-auth";
 
 function DashboardInner() {
@@ -13,10 +15,11 @@ function DashboardInner() {
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState("");
   const [explanation, setExplanation] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
   const [acc, setAcc] = useState("");
 
   const run = async () => {
-    setLoading(true); setErr(""); setRes(null); setExplanation("");
+    setLoading(true); setErr(""); setRes(null); setExplanation(""); setAiLoading(false);
     try {
       const cleaned = seq.replace(/[^ACDEFGHIKLMNPQRSTVWY]/gi, "").toUpperCase();
       if (cleaned.length < 10) throw new Error("Sequence too short (need ≥10)");
@@ -29,10 +32,12 @@ function DashboardInner() {
 
   const doExplain = async () => {
     if (!res) return;
+    setAiLoading(true); setExplanation("");
     try {
       const r = await explain({ sequence: res.sequence, global_quality: res.global_quality, global_uncertainty: res.global_uncertainty, gates: res.gates });
       setExplanation(r.explanation);
-    } catch(e:any){ setExplanation("Explain failed: "+e.message); }
+    } catch(e:any){ setExplanation(""); setErr("AI explanation unavailable — try again in a moment."); }
+    finally{ setAiLoading(false); }
   };
 
   return (
@@ -92,7 +97,28 @@ function DashboardInner() {
                 <Button variant="outline" onClick={()=>{const blob=new Blob([JSON.stringify(res,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`fusion_${res.length}.json`; a.click();}}className="w-full sm:w-auto justify-center">Download JSON</Button>
                 <Button variant="outline" onClick={doExplain}className="w-full sm:w-auto justify-center">AI Explanation</Button>
               </div>
-              {explanation && <div className="mt-4 bg-sand border border-line rounded-xl p-4 text-sm leading-relaxed whitespace-pre-wrap">{explanation}</div>}
+              {(aiLoading || explanation) && (
+                <div className="mt-4 rounded-2xl border border-line bg-gradient-to-b from-sand/80 to-card overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-card/80">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-lg bg-accent/10 text-accent flex items-center justify-center text-xs">✦</span>
+                      <span className="text-sm font-medium text-ink">AI Explanation</span>
+                    </div>
+                    <MoleculeMark className="h-7 w-20 opacity-70" id={`ai${res.length}`} />
+                  </div>
+                  <div className="px-4 py-3">
+                    {aiLoading ? (
+                      <div className="space-y-2.5 animate-pulse" aria-label="Generating explanation">
+                        {[92,100,78,96,60].map((w,i)=>(
+                          <div key={i} className="h-3 rounded-full bg-gradient-to-r from-line via-sand to-line" style={{width:`${w}%`}} />
+                        ))}
+                      </div>
+                    ) : (
+                      <RichText text={explanation} />
+                    )}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card>

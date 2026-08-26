@@ -2,6 +2,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import AuthCta from "@/components/auth-cta";
+import { RibbonArt } from "@/components/art";
 
 export default function Home() {
   return (
@@ -29,9 +30,15 @@ export default function Home() {
             <span>◆ 501k AFdb training</span><span>◆ CASP16 / CAMEO blind</span><span>◆ ECE + Ramachandran</span>
           </div>
         </motion.div>
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }} className="bg-card border border-line rounded-2xl p-6 shadow-sm">
-          <div className="text-xs font-medium tracking-widest text-muted">LIVE EXAMPLE</div>
-          <div className="mt-3 font-mono text-xs sm:text-sm bg-sand rounded-xl p-4 border border-line overflow-hidden">
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }} className="bg-card border border-line rounded-2xl p-5 sm:p-6 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium tracking-widest text-muted">LIVE EXAMPLE</div>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium">Gamma-calibrated</span>
+          </div>
+          <div className="mt-2 -mx-5 sm:-mx-6 border-b border-line">
+            <RibbonArt className="w-full h-36 sm:h-44" id="hero" />
+          </div>
+          <div className="mt-4 font-mono text-xs sm:text-sm bg-sand rounded-xl p-4 border border-line overflow-hidden">
             <div className="text-muted text-[10px] sm:text-xs break-all leading-relaxed">MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDNPLDAELLAQLGVD</div>
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3 text-xs">
               <div className="bg-white rounded-lg p-3 border border-line"><div className="text-muted">Global quality</div><div className="text-xl font-serif">84.2<span className="text-sm text-muted">/100</span></div></div>
