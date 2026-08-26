@@ -38,15 +38,16 @@ export default function RichText({ text, className = "" }: { text: string; class
 
   const flushList = () => {
     if (!list) return;
-    const Tag = list.ordered ? "ol" : "ul";
+    const lst = list;
+    const Tag = lst.ordered ? "ol" : "ul";
     blocks.push(
       <Tag key={`l${key++}`} className={
         list.ordered
           ? "my-2 space-y-1.5 list-decimal pl-5 marker:text-accent marker:font-semibold"
           : "my-2 space-y-1.5 pl-1"
       }>
-        {list.items.map((it, i) => (
-          <li key={i} className={list.ordered ? "pl-1" : "relative pl-4 before:absolute before:left-0 before:top-[0.55em] before:w-1.5 before:h-1.5 before:rounded-full before:bg-accent/70"}>
+        {lst.items.map((it, i) => (
+          <li key={i} className={lst.ordered ? "pl-1" : "relative pl-4 before:absolute before:left-0 before:top-[0.55em] before:w-1.5 before:h-1.5 before:rounded-full before:bg-accent/70"}>
             {inline(it, `li${key}-${i}`)}
           </li>
         ))}
