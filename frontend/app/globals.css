@@ -23,3 +23,15 @@ body { background: #FFFCF8; color: #1A1A1A; font-feature-settings: "ss01" 1; }
     background-attachment: local, local, scroll;
   }
 }
+
+/* ---- horizontal overflow hardening ---- */
+/* clip at root: page itself NEVER pans sideways; inner scrollers still work.
+   'clip' (unlike hidden) does not create a scroll container -> sticky keeps working */
+html, body { overflow-x: clip; }
+
+/* visible, slim horizontal scrollbar for internal scrollers */
+.scroll-x { overscroll-behavior-x: contain; }
+.scroll-x::-webkit-scrollbar { height: 8px; }
+.scroll-x::-webkit-scrollbar-track { background: #F5EFE6; border-radius: 8px; }
+.scroll-x::-webkit-scrollbar-thumb { background: #C9BFB2; border-radius: 8px; }
+.scroll-x::-webkit-scrollbar-thumb:hover { background: #B0A493; }

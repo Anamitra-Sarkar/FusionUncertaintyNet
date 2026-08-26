@@ -67,8 +67,8 @@ function DashboardInner() {
       </Card>
 
       {res && (
-        <div className="grid md:grid-cols-3 gap-6">
-          <Card className="md:col-span-2">
+        <div className="grid md:grid-cols-3 gap-4 sm:gap-6 [&>*]:min-w-0">
+          <Card className="md:col-span-2 max-w-full overflow-hidden">
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-serif text-xl">Per-residue Quality & Uncertainty</span><span className="text-xs border border-line rounded-full px-3 py-1 bg-sand">{res.length} residues · outliers {res.ramachandran_outliers}</span></div>
               <div className="text-xs text-muted">Gates: ESM {res.gates?.[0]?.toFixed(2)} · ProtT5 {res.gates?.[1]?.toFixed(2)} · AF {res.gates?.[2]?.toFixed(2)} · Global {res.global_quality.toFixed(1)}/100 · U {res.global_uncertainty.toFixed(2)}</div>
@@ -76,7 +76,7 @@ function DashboardInner() {
             <CardContent>
               <div className="relative">
                 <span className="sm:hidden absolute right-2 top-1 z-10 text-[10px] text-muted bg-paper/80 rounded-full px-2 py-0.5 border border-line">swipe →</span>
-                <div className="h-44 sm:h-48 scroll-x border-x border-line rounded-xl bg-sand p-2">
+                <div className="h-44 sm:h-48 scroll-x max-w-full border-x border-line rounded-xl bg-sand p-2">
                 <div className="flex items-end gap-[2px] h-full" style={{ minWidth: res.residues.length*6 }}>
                   {res.residues.map((r:any)=>(
                     <div key={r.index} className="flex flex-col items-center gap-1" style={{ width: 6 }}>
@@ -86,7 +86,7 @@ function DashboardInner() {
                 </div>
               </div></div>
               <div className="text-[11px] text-muted mt-2 flex justify-between"><span>Low → High confidence (teal)</span><span>Red = high total uncertainty</span></div>
-              <div className="mt-4 max-h-72 sm:max-h-64 scroll-x border border-line rounded-xl">
+              <div className="mt-4 max-h-72 sm:max-h-64 scroll-x max-w-full border border-line rounded-xl">
                 <table className="w-full min-w-[560px] text-xs">
                   <thead className="bg-sand sticky top-0"><tr><th className="p-2 text-left sticky left-0 bg-sand">#</th><th className="p-2">AA</th><th className="p-2">Q</th><th className="p-2">Ale</th><th className="p-2">Epi</th><th className="p-2">TotU</th></tr></thead>
                   <tbody>{res.residues.slice(0,200).map((r:any)=><tr key={r.index} className="border-t border-line"><td className="p-1.5">{r.index}</td><td className="p-1.5 font-mono">{r.aa}</td><td className="p-1.5">{r.pred_quality.toFixed(1)}</td><td className="p-1.5">{r.aleatoric.toFixed(2)}</td><td className="p-1.5">{r.epistemic.toFixed(3)}</td><td className="p-1.5">{r.total_unc.toFixed(2)}</td></tr>)}</tbody>
