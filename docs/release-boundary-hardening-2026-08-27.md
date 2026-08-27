@@ -20,3 +20,11 @@ This change intentionally makes an unconfigured service less permissive. It does
 The public landing page was also changed to remove its hard-coded “live example” sequence, quality score, uncertainty value, and gating weights. It now presents the same no-approved-artifact abstention state as the service and is protected by a source-level boundary regression. This prevents a promotional interface from implying a live, calibrated result where the independently reviewed release evidence is absent.
 
 Shared metadata, navigation, and footer language now describe a release-gated research workspace rather than available calibrated scores or an operational prediction service. The public-boundary regression scans those shared surfaces as well as the landing page.
+
+## Provider verification
+
+The heavy Hugging Face Space was found publicly exposed during verification and was immediately restored to private visibility. Its source synchronization workflow completed successfully for the fail-closed hardening revision. Because the initially running container retained an older revision, the Space was restarted and then verified to report the synchronized source revision. Authenticated non-prediction checks returned health with `model_loaded: false`, `release_configured: false`, and `/ready` with HTTP `503` and `MODEL_NOT_READY`.
+
+The public Vercel frontend deployment `dpl_7KNNFbG8RLzwAraanbcmEKCWoEVo` for `04f8878` reached `READY`. The canonical landing page was checked and presented the no-approved-artifact abstention state.
+
+The lightweight Render service deployed the hardening revision `04f8878`. Its health response reports that identity verification and heavy internal authentication are configured without exposing their values. A browser preflight from `https://protein-reliability.vercel.app` returned HTTP `200` with that exact `Access-Control-Allow-Origin` value; it does not return a wildcard or credentialed cross-origin response.
