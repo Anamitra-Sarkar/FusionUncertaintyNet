@@ -28,3 +28,7 @@ The heavy Hugging Face Space was found publicly exposed during verification and 
 The public Vercel frontend deployment `dpl_7KNNFbG8RLzwAraanbcmEKCWoEVo` for `04f8878` reached `READY`. The canonical landing page was checked and presented the no-approved-artifact abstention state.
 
 The lightweight Render service deployed the hardening revision `04f8878`. Its health response reports that identity verification and heavy internal authentication are configured without exposing their values. A browser preflight from `https://protein-reliability.vercel.app` returned HTTP `200` with that exact `Access-Control-Allow-Origin` value; it does not return a wildcard or credentialed cross-origin response.
+
+## CI compatibility verification
+
+The frontend’s controlled Next.js `16.3.3` update requires Node.js `20.9.0` or newer. The repository CI workflow previously selected Node.js 18, causing the frontend build to fail before it could exercise the release-boundary source. Updating only the runner baseline to Node.js 20 restored the completed CI run `33120702982` for `9854081`. The same source built locally with explicit production environment settings, generated all six static routes, and the three heavy/lite fail-closed boundary regressions passed. The heavy Space synchronization workflow remains path-filtered to `backend-heavy/**`, `training/**`, and its own workflow definition; this CI correction did not sync, release, or load a model artifact.
