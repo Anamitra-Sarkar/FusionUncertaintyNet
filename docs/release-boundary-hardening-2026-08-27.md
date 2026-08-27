@@ -18,3 +18,5 @@ The lightweight gateway now requires Firebase Admin verification and a configure
 This change intentionally makes an unconfigured service less permissive. It does not train, upload, promote, or make any biomedical or structural prediction claim.
 
 The public landing page was also changed to remove its hard-coded “live example” sequence, quality score, uncertainty value, and gating weights. It now presents the same no-approved-artifact abstention state as the service and is protected by a source-level boundary regression. This prevents a promotional interface from implying a live, calibrated result where the independently reviewed release evidence is absent.
+
+Shared metadata, navigation, and footer language now describe a release-gated research workspace rather than available calibrated scores or an operational prediction service. The public-boundary regression scans those shared surfaces as well as the landing page.

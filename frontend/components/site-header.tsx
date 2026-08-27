@@ -28,8 +28,8 @@ export default function SiteHeader() {
 
   const links = [
     { href: "/", label: "Overview" },
-    { href: "/dashboard", label: "Predict" },
-    { href: "/history", label: "History" },
+    { href: "/dashboard", label: "Workspace" },
+    { href: "/history", label: "Research record" },
   ];
   const authed = ready && !!user;
   const initial = user?.email?.[0]?.toUpperCase() ?? "?";
@@ -41,7 +41,7 @@ export default function SiteHeader() {
           <div className="w-8 h-8 shrink-0 rounded-lg bg-accent flex items-center justify-center text-white font-serif text-lg">◈</div>
           <div className="min-w-0">
             <div className="font-serif text-base sm:text-[18px] leading-none tracking-tight truncate">FusionUncertaintyNet</div>
-            <div className="text-[11px] sm:text-xs text-muted -mt-0.5 truncate">Calibrated Protein Reliability</div>
+            <div className="text-[11px] sm:text-xs text-muted -mt-0.5 truncate">Release-gated research</div>
           </div>
         </a>
 

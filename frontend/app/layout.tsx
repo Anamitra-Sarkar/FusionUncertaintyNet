@@ -8,7 +8,7 @@ const news = Newsreader({ subsets: ["latin"], variable: "--font-serif" });
 
 export const metadata = {
   title: "FusionUncertaintyNet — Protein Reliability",
-  description: "Adaptive Multi-PLM with Evidential Deep Learning for calibrated protein structure reliability",
+  description: "Release-gated research framework for protein-structure reliability evaluation.",
 };
 
 export const viewport: Viewport = {
@@ -33,21 +33,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <span className="font-serif tracking-tight">FusionUncertaintyNet</span>
               </div>
               <p className="text-xs text-muted mt-3 leading-relaxed max-w-xs">
-                Calibrated reliability scores for predicted protein structures — confidence you can take to the bench.
+                Research infrastructure that abstains until a reviewed immutable artifact and its supporting evidence are available.
               </p>
             </div>
             <div>
               <div className="text-xs font-semibold tracking-widest text-muted mb-3">PRODUCT</div>
               <ul className="space-y-2 text-sm">
                 <li><a href="/" className="hover:text-accent transition-colors">Overview</a></li>
-                <li><a href="/dashboard" className="hover:text-accent transition-colors">New prediction</a></li>
-                <li><a href="/history" className="hover:text-accent transition-colors">My analyses</a></li>
+                <li><a href="/dashboard" className="hover:text-accent transition-colors">Research workspace</a></li>
+                <li><a href="/history" className="hover:text-accent transition-colors">Research record</a></li>
               </ul>
             </div>
             <div className="md:text-right">
               <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border border-line bg-paper">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                All systems operational
+                <span className="w-1.5 h-1.5 rounded-full bg-accent2" />
+                Release review pending
               </div>
               <div className="text-xs text-muted mt-4">© 2026 FusionUncertaintyNet. All rights reserved.</div>
             </div>
