@@ -5,3 +5,4 @@
 - [ ] Run the full frontend/backend quality gate and reverify the existing Vercel, lightweight gateway, and heavy-service health boundaries without changing model or calibration claims.
 - [x] Add a focused backend health-contract regression that proves an unloaded heavy model remains visibly not ready and does not expose a prediction claim.
 - [x] Remove random-initialized inference and fail closed when an approved checkpoint is unavailable; require a configured internal credential for heavy prediction routes and add regressions for both denial paths.
+- [x] Remove the public hard-coded “live example” quality, uncertainty, and gating values, replacing them with an explicit no-approved-model state that does not represent a biomedical or structural prediction.
