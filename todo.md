@@ -8,3 +8,4 @@
 - [x] Remove random-initialized inference and fail closed when an approved checkpoint is unavailable; require a configured internal credential for heavy prediction routes and add regressions for both denial paths.
 - [x] Remove the public hard-coded “live example” quality, uncertainty, and gating values, replacing them with an explicit no-approved-model state that does not represent a biomedical or structural prediction.
 - [x] Remove shared footer and navigation language that implies calibrated scores or an available prediction workflow while no approved model artifact is configured.
+- [ ] Update the frontend CI runner to a Node version supported by the controlled Next.js upgrade and verify the full pipeline without weakening release checks.
