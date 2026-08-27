@@ -1,4 +1,4 @@
-"""Heavy Backend — HF Spaces Docker, GPU inference."""
+"""Heavy Backend — private, release-gated HF Spaces inference."""
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -8,52 +8,63 @@ import os
 
 app = FastAPI(title="FusionUncertaintyNet Heavy", version="0.1.0")
 
+
+def configured_origins() -> list[str]:
+    return [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=configured_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Lazy model singleton
+# Lazy model singleton. An unloaded model is intentionally not a prediction-capable model.
 _model = None
 _model_source = "not-loaded"
+_model_load_error: Optional[str] = None
 _device = "cuda" if torch.cuda.is_available() else "cpu"
 
+
+class ModelNotReady(RuntimeError):
+    """Raised when the deployed release is not independently approved and loadable."""
+
+
+def release_configuration() -> tuple[bool, str, str]:
+    """Return whether a specific immutable local checkpoint is eligible for loading."""
+    approved = os.getenv("MODEL_RELEASE_APPROVED", "").strip().lower() == "true"
+    revision = os.getenv("MODEL_ARTIFACT_REVISION", "").strip()
+    model_path = os.getenv("MODEL_PATH", "").strip()
+    if not approved:
+        return False, "release_not_approved", ""
+    if len(revision) < 40:
+        return False, "artifact_revision_missing_or_unpinned", ""
+    if not model_path:
+        return False, "model_path_missing", ""
+    if not os.path.isfile(os.path.join(model_path, "pytorch_model.bin")):
+        return False, "checkpoint_unavailable", ""
+    return True, "ready_to_load", model_path
+
+
 def get_model():
-    global _model
+    global _model, _model_source, _model_load_error
     if _model is None:
+        eligible, reason, model_path = release_configuration()
+        if not eligible:
+            raise ModelNotReady(reason)
         from fusionuncertaintynet.model import FusionUncertaintyNet
-        ckpt = os.getenv("MODEL_PATH", "./checkpoints")
-        hf_repo = os.getenv("HF_MODEL_REPO", "bhumika-tewari-282006/fusionuncertaintynet-best")
         try:
-            if os.path.exists(f"{ckpt}/pytorch_model.bin"):
-                global _model_source
-                _model = FusionUncertaintyNet.from_pretrained(ckpt, device=_device)
-                _model_source = f"local:{ckpt}"
-                print(f"[heavy] loaded checkpoint from local {ckpt}")
-            else:
-                # Try HF Hub (P100-trained checkpoints auto-pushed)
-                try:
-                    from huggingface_hub import snapshot_download
-                    print(f"[heavy] trying HF Hub {hf_repo}...")
-                    local = snapshot_download(repo_id=hf_repo, allow_patterns=["pytorch_model.bin","config.json"], token=os.getenv("HF_TOKEN"))
-                    _model = FusionUncertaintyNet.from_pretrained(local, device=_device)
-                    _model_source = f"hf-hub:{hf_repo}"
-                    print(f"[heavy] loaded checkpoint from HF Hub {hf_repo} -> {local}")
-                except Exception as hf_e:
-                    print(f"[heavy] HF Hub load failed ({hf_e}), using random init")
-                    _model = FusionUncertaintyNet()
-                    _model.to(_device)
-                    _model.eval()
-                    _model_source = "random-init"
-                    print(f"[heavy] initialized random model on {_device}")
-        except Exception as e:
-            print(f"[heavy] failed to load checkpoint: {e}, using random")
-            _model = FusionUncertaintyNet()
-            _model.to(_device)
-            _model.eval()
+            _model = FusionUncertaintyNet.from_pretrained(model_path, device=_device)
+            _model_source = "approved-local-checkpoint"
+            _model_load_error = None
+            print("[heavy] approved checkpoint loaded")
+        except Exception:
+            _model = None
+            _model_source = "not-loaded"
+            _model_load_error = "checkpoint_load_failed"
+            print("[heavy] approved checkpoint load failed")
+            raise ModelNotReady("checkpoint_load_failed")
     return _model
 
 class PredictRequest(BaseModel):
@@ -85,19 +96,31 @@ class PredictResponse(BaseModel):
     model_version: str
 
 def verify_shared_secret(x_render_secret: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
-    # Allow either shared secret (from lite backend) or open for demo if no secret set
-    expected = os.getenv("HEAVY_SHARED_SECRET")
-    if expected and expected != "change-me-32chars":
-        # if token provided, verify; otherwise allow Vercel direct for testing but log
-        if x_render_secret != expected and authorization != f"Bearer {expected}":
-            # still allow if request comes from localhost or hf internal
-            pass
+    expected = os.getenv("HEAVY_SHARED_SECRET", "").strip()
+    if not expected or expected == "change-me-32chars":
+        raise HTTPException(status_code=503, detail={"code": "INTERNAL_AUTH_NOT_CONFIGURED"})
+    if x_render_secret != expected and authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=403, detail={"code": "INTERNAL_AUTH_DENIED"})
     return True
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "device": _device, "model_loaded": _model is not None,
-            "cuda": torch.cuda.is_available(), "model_source": _model_source}
+    configured, _, _ = release_configuration()
+    return {
+        "status": "ok",
+        "device": _device,
+        "model_loaded": _model is not None,
+        "release_configured": configured,
+        "model_source": _model_source,
+    }
+
+
+@app.get("/ready")
+def ready():
+    configured, reason, _ = release_configuration()
+    if not configured or _model is None:
+        raise HTTPException(status_code=503, detail={"code": "MODEL_NOT_READY", "reason": reason})
+    return {"status": "ready", "model_source": _model_source}
 
 @app.get("/")
 def root():
@@ -118,8 +141,10 @@ def predict(req: PredictRequest):
     if invalid_count > len(seq) * 0.3:
         raise HTTPException(status_code=400, detail=f"Sequence contains too many non-standard AAs ({invalid_count}/{len(seq)})")
 
-    from fusionuncertaintynet.extraction import extract_all, sequence_stats
-    from fusionuncertaintynet.losses import pearson_corr
+    try:
+        model = get_model()
+    except ModelNotReady as error:
+        raise HTTPException(status_code=503, detail={"code": "MODEL_NOT_READY", "reason": str(error)})
 
     af_kwargs = {}
     if req.plddt:
@@ -131,24 +156,21 @@ def predict(req: PredictRequest):
     if req.pae:
         af_kwargs["pae"] = req.pae
 
-    # extraction
     try:
+        from fusionuncertaintynet.extraction import extract_all
         feats = extract_all(seq, device=_device, af_kwargs=af_kwargs)
-        # inject disorder override if provided
         if req.disorder_score is not None:
             feats["stats"]["disorder"] = req.disorder_score
-        model = get_model()
         model.eval()
-        # to device
         esm = feats["esm"].to(_device)
         prott5 = feats["prott5"].to(_device)
         af = feats["af"].to(_device)
         stats = torch.tensor([feats["stats"]["length"], feats["stats"]["charged_frac"], feats["stats"]["disorder"]], dtype=torch.float32, device=_device)
         with torch.no_grad():
             out = model(esm, prott5, af, stats, seq=seq)
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
+    except Exception:
+        print("[heavy] inference pipeline unavailable")
+        raise HTTPException(status_code=503, detail={"code": "INFERENCE_UNAVAILABLE"})
 
     pred = out["pred"]  # [L,1]
     k = out["k"]
@@ -198,7 +220,7 @@ def predict(req: PredictRequest):
         model_version=f"0.1.0-{_model_source}"
     )
 
-@app.post("/batch")
+@app.post("/batch", dependencies=[Depends(verify_shared_secret)])
 def batch_predict(seqs: List[PredictRequest]):
     # simple batch wrapper
     if len(seqs) > 5:

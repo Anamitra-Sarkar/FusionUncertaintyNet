@@ -7,10 +7,16 @@ from pydantic import BaseModel, Field
 import httpx
 
 app = FastAPI(title="FusionUncertaintyNet Lite", version="0.1.0")
+
+
+def configured_origins() -> list[str]:
+    return [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=configured_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -52,9 +58,9 @@ def init_firebase():
             _firebase_inited = True
             print("[lite] Firebase initialized from json env")
             return
-        print("[lite] No Firebase admin cred found — auth will be mocked for local dev")
-    except Exception as e:
-        print(f"[lite] Firebase init error: {e}")
+        print("[lite] Firebase verification is not configured")
+    except Exception:
+        print("[lite] Firebase verification initialization failed")
 
 init_firebase()
 
@@ -64,25 +70,14 @@ def verify_token(authorization: Optional[str] = Header(None)):
     token = authorization.split(" ", 1)[1]
     if not token:
         raise HTTPException(status_code=401, detail="Empty token")
-    # if firebase not inited, allow but mark as mock user for local dev
     if not _firebase_inited:
-        if token == "mock" or len(token) < 20:
-            return {"uid": "mock-user", "email": "mock@test.com"}
-        # try still verify if possible
-        try:
-            from firebase_admin import auth
-            decoded = auth.verify_id_token(token)
-            return decoded
-        except Exception:
-            # for local dev without firebase, accept any token as mock but log
-            print("[lite] Firebase not inited, accepting token as mock")
-            return {"uid": "mock-user", "email": "mock@test.com"}
+        raise HTTPException(status_code=503, detail={"code": "IDENTITY_VERIFICATION_UNAVAILABLE"})
     try:
         from firebase_admin import auth
         decoded = auth.verify_id_token(token)
         return decoded
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
 
 # ---- Models ----
 class PredictRequest(BaseModel):
@@ -101,12 +96,16 @@ class ExplainRequest(BaseModel):
     history_summary: Optional[str] = None
 
 HEAVY_URL = os.getenv("HF_SPACE_URL", os.getenv("HEAVY_URL", "http://localhost:7860"))
-HEAVY_SECRET = os.getenv("HEAVY_SHARED_SECRET", "change-me-32chars")
+HEAVY_SECRET = os.getenv("HEAVY_SHARED_SECRET", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "heavy_url": HEAVY_URL, "firebase": _firebase_inited, "groq_model": GROQ_MODEL}
+    return {
+        "status": "ok",
+        "firebase_verification_configured": _firebase_inited,
+        "heavy_auth_configured": bool(HEAVY_SECRET and HEAVY_SECRET != "change-me-32chars"),
+    }
 
 @app.get("/")
 def root():
@@ -115,6 +114,8 @@ def root():
 @app.post("/api/predict")
 async def predict_proxy(req: PredictRequest, user=Depends(verify_token)):
     """Verify auth, forward to heavy, log to Firestore, return."""
+    if not HEAVY_SECRET or HEAVY_SECRET == "change-me-32chars":
+        raise HTTPException(status_code=503, detail={"code": "INFERENCE_GATEWAY_NOT_CONFIGURED"})
     heavy_endpoint = HEAVY_URL.rstrip("/") + "/predict"
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
@@ -129,46 +130,6 @@ async def predict_proxy(req: PredictRequest, user=Depends(verify_token)):
             raise HTTPException(status_code=resp.status_code, detail=f"Heavy error: {resp.text[:500]}")
         data = resp.json()
 
-    # log to Firestore (namespaced fusion_predictions) — best effort, don't fail request if Firestore down
-    # cabbage-guard Firestore database is named "default" (without parentheses) in asia-south1, not "(default)"
-    try:
-        if _firebase_inited:
-            from firebase_admin import firestore
-            # Try database_id="default" for firebase_admin>=6.6, fallback to database="default" or default
-            try:
-                db = firestore.client(database_id="default")
-            except TypeError:
-                try:
-                    db = firestore.client(database="default")
-                except TypeError:
-                    db = firestore.client()
-            job_id = f"{user['uid']}_{int(time.time()*1000)}"
-            doc = {
-                "uid": user["uid"],
-                "email": user.get("email"),
-                "sequence": data.get("sequence", req.sequence)[:500],  # truncate for privacy
-                "length": data.get("length"),
-                "global_quality": data.get("global_quality"),
-                "global_uncertainty": data.get("global_uncertainty"),
-                "gates": data.get("gates"),
-                "ramachandran_outliers": data.get("ramachandran_outliers"),
-                "created_at": firestore.SERVER_TIMESTAMP,
-                "fusion_version": "0.1.0"
-            }
-            db.collection("fusion_predictions").document(job_id).set(doc)
-            data["job_id"] = job_id
-        else:
-            data["job_id"] = f"mock_{int(time.time())}"
-    except Exception as e:
-        print(f"[lite] Firestore log failed: {e}")
-        data["job_id"] = f"fallback_{int(time.time())}"
-
-    return data
-
-@app.get("/api/history")
-def history(user=Depends(verify_token), limit: int = 20):
-    if not _firebase_inited:
-        return {"items": [], "note": "Firebase not configured — mock history"}
     try:
         from firebase_admin import firestore
         try:
@@ -178,8 +139,38 @@ def history(user=Depends(verify_token), limit: int = 20):
                 db = firestore.client(database="default")
             except TypeError:
                 db = firestore.client()
-        # query fusion_predictions where uid == user uid, order by created_at desc
-        # Handle case where Firestore database not exists (cabbage-guard may need manual enable via console)
+        job_id = f"{user['uid']}_{int(time.time()*1000)}"
+        doc = {
+            "uid": user["uid"],
+            "email": user.get("email"),
+            "sequence": data.get("sequence", req.sequence)[:500],
+            "length": data.get("length"),
+            "global_quality": data.get("global_quality"),
+            "global_uncertainty": data.get("global_uncertainty"),
+            "gates": data.get("gates"),
+            "ramachandran_outliers": data.get("ramachandran_outliers"),
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "fusion_version": "0.1.0",
+        }
+        db.collection("fusion_predictions").document(job_id).set(doc)
+        data["job_id"] = job_id
+    except Exception:
+        print("[lite] audit persistence unavailable")
+        raise HTTPException(status_code=503, detail={"code": "AUDIT_PERSISTENCE_UNAVAILABLE"})
+
+    return data
+
+@app.get("/api/history")
+def history(user=Depends(verify_token), limit: int = 20):
+    try:
+        from firebase_admin import firestore
+        try:
+            db = firestore.client(database_id="default")
+        except TypeError:
+            try:
+                db = firestore.client(database="default")
+            except TypeError:
+                db = firestore.client()
         try:
             q = db.collection("fusion_predictions").where("uid", "==", user["uid"]).order_by("created_at", direction=firestore.Query.DESCENDING).limit(min(limit, 50))
             docs = q.stream()
@@ -191,16 +182,14 @@ def history(user=Depends(verify_token), limit: int = 20):
                     data["created_at"] = data["created_at"].isoformat()
                 items.append(data)
             return {"items": items}
-        except Exception as inner:
-            # Firestore not enabled -> return empty with note, do not crash
-            if "does not exist" in str(inner) or "NOT_FOUND" in str(inner) or "404" in str(inner):
-                print(f"[lite] Firestore not enabled, returning empty history: {inner}")
-                return {"items": [], "note": "Firestore database not yet enabled for cabbage-guard — enable via https://console.cloud.google.com/datastore/setup?project=cabbage-guard or use mock history. Predictions still work and are returned directly."}
-            raise
-    except Exception as e:
-        print(f"[lite] history error: {e}")
-        # Graceful fallback instead of 500
-        return {"items": [], "note": f"History temporarily unavailable: {str(e)[:200]}", "error": str(e)[:500]}
+        except Exception:
+            print("[lite] history persistence unavailable")
+            raise HTTPException(status_code=503, detail={"code": "HISTORY_UNAVAILABLE"})
+    except HTTPException:
+        raise
+    except Exception:
+        print("[lite] history persistence unavailable")
+        raise HTTPException(status_code=503, detail={"code": "HISTORY_UNAVAILABLE"})
 
 @app.post("/api/explain")
 def explain(req: ExplainRequest, user=Depends(verify_token)):
