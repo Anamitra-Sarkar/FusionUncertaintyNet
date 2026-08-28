@@ -116,3 +116,18 @@ curl -X POST -H "Authorization: Bearer $HF_TOKEN" \
 3. Optional top-up of MiniMax balance for raster hero variants (SVG art shipped instead).
 
 Future scale-up recipe (when GPU quota allows): re-run `fusion-train-real-v1` on T4 → full ESM2-t33+ProtT5-XL paper path over all 62 shards (~298k), then restart Space.
+
+---
+## CORRECTION — 2026-08-28
+
+The "CLOSED" verdict above and its **val Pearson 0.9987 / ECE 0.0087** were
+real numbers from a real training run, but the task was mislabeled: the AF
+input branch was fed the same `plddt` the target is derived from
+(`target = plddt - disorder*10`), so the model only had to copy its own
+input through. A naive raw-pLDDT baseline (zero learning) measured **r=0.9995**
+against the same target on a real held-out shard — beating the "closed"
+checkpoint. See `docs/leakage-and-retrain-2026-08-28.md` for the full
+writeup, the fix (commit `8392763`), and status. The release gate was never
+opened for this artifact and remains fail-closed; this project is **not**
+closed. `fusionuncertaintynet-best` on the Hub is still the leaked artifact
+pending a corrected retrain.
