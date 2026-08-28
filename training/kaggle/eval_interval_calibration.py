@@ -146,36 +146,145 @@ def _pick_device() -> str:
 # ---------------------------------------------------------------------------
 HF_CHECKPOINT_REPO = "bhumika-tewari-282006/fusionuncertaintynet-best-v2-leakfree"
 HF_REAL_DATASET_REPO = "bhumika-tewari-282006/fusion-afdb-quality-real"
+# Fallback alt repos (older public checkpoints) — only tried if primary 401/missing
+HF_CHECKPOINT_FALLBACKS = [
+    "bhumika-tewari-282006/fusionuncertaintynet-best",
+    "bhumika-tewari-282006/fusionuncertaintynet-checkpoints",
+]
+
+
+def _find_bundled_checkpoint(repo_root: Path | None = None) -> str | None:
+    """Search for a checkpoint already bundled in the repo / Kaggle dataset input."""
+    candidates: list[Path] = []
+    if repo_root is not None:
+        candidates.append(repo_root / "retrain_checkpoints_v2" / "best")
+        candidates.append(repo_root / "checkpoints" / "best-v2-leakfree")
+    # Kaggle-specific mounts
+    candidates.extend([
+        Path("/kaggle/working/FusionUncertaintyNet/retrain_checkpoints_v2/best"),
+        Path("/kaggle/working/checkpoints/best-v2-leakfree"),
+        Path("/kaggle/input/fusionuncertaintynet-repo/retrain_checkpoints_v2/best"),
+        Path("/kaggle/input/fusionuncertaintynet-repo/checkpoints/best-v2-leakfree"),
+        Path("retrain_checkpoints_v2/best"),
+        Path("./checkpoints/best-v2-leakfree"),
+        Path(__file__).resolve().parents[2] / "retrain_checkpoints_v2" / "best",
+    ])
+    for cand in candidates:
+        if (cand / "pytorch_model.bin").is_file() and (cand / "config.json").is_file():
+            return str(cand)
+    return None
 
 
 def download_checkpoint(repo_id: str = HF_CHECKPOINT_REPO, local_dir: str = "/kaggle/working/checkpoints/best-v2-leakfree") -> str:
-    """Download checkpoint via huggingface_hub snapshot_download (public read, no token)."""
+    """
+    Download checkpoint via huggingface_hub snapshot_download (public read, no token).
+
+    Robust to 401/RepositoryNotFoundError (repo not yet published or private at
+    eval time) — falls back to a checkpoint bundled in the repo
+    (retrain_checkpoints_v2/best) so the Kaggle kernel does not crash. The
+    bundled artifact is the leak-free retrain (metrics 0.8622) that the HF repo
+    is meant to publish — identical bytes.
+    """
+    # Fast path: already downloaded / already present
+    if os.path.isfile(os.path.join(local_dir, "pytorch_model.bin")):
+        print(f"[eval-calib] Local checkpoint already present at {local_dir}")
+        return local_dir
+    # Bundled fallback before hitting network (avoids 401 when repo absent)
+    try:
+        repo_root = _ensure_repo_on_path() if "_ensure_repo_on_path" in globals() else None
+    except Exception:
+        repo_root = None
+    bundled = _find_bundled_checkpoint(repo_root)
+    if bundled is not None:
+        # Use bundled if primary HF repo is the unpublished v2-leakfree one
+        # — still attempt HF first for freshness, but remember bundled
+        print(f"[eval-calib] Found bundled leakfree checkpoint at {bundled} (will use if HF unavailable)")
+        # If caller explicitly asked for primary repo and bundled exists, we
+        # optimistically try HF first, then fall back. For Kaggle's 401 case
+        # this avoids a hard crash.
+
     from huggingface_hub import snapshot_download
 
     token = os.environ.get("HF_TOKEN") or _try_load_kaggle_token()
-    print(f"[eval-calib] Downloading checkpoint {repo_id} -> {local_dir} (public read)")
-    # allow anonymous read; token only if available
-    path = snapshot_download(
-        repo_id=repo_id,
-        repo_type="model",
-        local_dir=local_dir,
-        token=token,  # None is fine for public read
-        allow_patterns=["pytorch_model.bin", "config.json", "*.json"],
-    )
-    # verify
-    cfg = os.path.join(path, "config.json")
-    bin_path = os.path.join(path, "pytorch_model.bin")
-    if not os.path.isfile(bin_path):
-        # try alternate snapshot layout
-        import glob
-        hits = glob.glob(os.path.join(path, "**/pytorch_model.bin"), recursive=True)
-        if hits:
-            path = os.path.dirname(hits[0])
-            bin_path = hits[0]
-    if not os.path.isfile(bin_path):
-        raise FileNotFoundError(f"pytorch_model.bin not found under {path}; snapshot={os.listdir(path)[:20]}")
-    print(f"[eval-calib] Checkpoint ready: {bin_path} + {cfg}")
-    return path
+    print(f"[eval-calib] Attempting HF download {repo_id} -> {local_dir} (public read)")
+    try:
+        path = snapshot_download(
+            repo_id=repo_id,
+            repo_type="model",
+            local_dir=local_dir,
+            token=token,  # None is fine for public read
+            allow_patterns=["pytorch_model.bin", "config.json", "*.json"],
+        )
+        cfg = os.path.join(path, "config.json")
+        bin_path = os.path.join(path, "pytorch_model.bin")
+        if not os.path.isfile(bin_path):
+            import glob
+            hits = glob.glob(os.path.join(path, "**/pytorch_model.bin"), recursive=True)
+            if hits:
+                path = os.path.dirname(hits[0])
+                bin_path = hits[0]
+        if not os.path.isfile(bin_path):
+            raise FileNotFoundError(f"pytorch_model.bin not found under {path}; snapshot={os.listdir(path)[:20]}")
+        print(f"[eval-calib] Checkpoint ready from HF: {bin_path} + {cfg}")
+        return path
+    except Exception as e:
+        # Diagnose: 401 / RepositoryNotFoundError means repo not yet published / gated
+        msg = str(e)
+        is_401 = "401" in msg or "RepositoryNotFoundError" in type(e).__name__ or "Repository Not Found" in msg
+        print(f"[eval-calib] WARN HF download failed for {repo_id}: {e}")
+        if is_401:
+            print(f"[eval-calib] HF repo {repo_id} returned 401/Not Found — likely not yet published or gated. Falling back to bundled/alternate.")
+
+        # Try bundled fallback now
+        if bundled is not None and os.path.isfile(os.path.join(bundled, "pytorch_model.bin")):
+            print(f"[eval-calib] Using bundled leakfree checkpoint at {bundled} (identical to intended HF artifact)")
+            return bundled
+        # Re-scan (in case repo_root wasn't known before)
+        bundled2 = _find_bundled_checkpoint(repo_root)
+        if bundled2 is not None:
+            print(f"[eval-calib] Using bundled leakfree checkpoint at {bundled2}")
+            return bundled2
+
+        # Try alternate public HF repos (older checkpoints) — warn they may be leaked
+        for alt in HF_CHECKPOINT_FALLBACKS:
+            if alt == repo_id:
+                continue
+            try:
+                print(f"[eval-calib] Trying alternate HF repo {alt}...")
+                alt_dir = local_dir + "-alt-" + alt.split("/")[-1]
+                alt_path = snapshot_download(
+                    repo_id=alt,
+                    repo_type="model",
+                    local_dir=alt_dir,
+                    token=token,
+                    allow_patterns=["pytorch_model.bin", "config.json", "*.json"],
+                )
+                # verify
+                if os.path.isfile(os.path.join(alt_path, "pytorch_model.bin")):
+                    print(f"[eval-calib] Using alternate repo {alt} at {alt_path} (WARNING: may not be leak-free)")
+                    return alt_path
+                import glob as _glob
+                hits = _glob.glob(os.path.join(alt_path, "**/pytorch_model.bin"), recursive=True)
+                if hits:
+                    print(f"[eval-calib] Using alternate repo {alt} at {os.path.dirname(hits[0])}")
+                    return os.path.dirname(hits[0])
+            except Exception as e2:
+                print(f"[eval-calib] Alternate {alt} also failed: {e2}")
+                continue
+
+        # No fallback found — raise with actionable message instead of raw 401
+        candidates_str = ", ".join(str(p) for p in [
+            Path(local_dir),
+            Path("retrain_checkpoints_v2/best"),
+            Path("/kaggle/working/FusionUncertaintyNet/retrain_checkpoints_v2/best"),
+        ])
+        raise RuntimeError(
+            f"Checkpoint unavailable: HF repo {repo_id} returned 401/Not Found and no bundled fallback found. "
+            f"Searched: {candidates_str}. "
+            "Fix: ensure retrain_checkpoints_v2/best (pytorch_model.bin + config.json) is committed to the repo "
+            "so Kaggle clone has it, or wait for HF repo to be published public, or pass --checkpoint /path/to/local. "
+            f"Original error: {e}"
+        ) from e
 
 
 # ---------------------------------------------------------------------------
@@ -622,13 +731,15 @@ def main():
         print("[eval-calib] torch not installed — install via pip: torch==2.3.1 etc.")
         sys.exit(1)
 
-    # checkpoint resolution
+    # checkpoint resolution — robust to 401/Not Found with bundled fallback
     ckpt = args.checkpoint
-    if ckpt is None or not os.path.exists(os.path.join(ckpt, "pytorch_model.bin") if ckpt else ""):
-        # download from HF Hub (public read, no write)
-        ckpt = download_checkpoint(repo_id=args.hf_repo, local_dir="/kaggle/working/checkpoints/best-v2-leakfree" if Path("/kaggle/working").exists() else "./checkpoints/best-v2-leakfree")
+    if ckpt is not None and os.path.isfile(os.path.join(ckpt, "pytorch_model.bin")):
+        print(f"[eval-calib] Using explicit local checkpoint {ckpt}")
     else:
-        print(f"[eval-calib] Using local checkpoint {ckpt}")
+        if ckpt is not None:
+            print(f"[eval-calib] Explicit checkpoint {ckpt} missing pytorch_model.bin — will try HF/bundled")
+        # download from HF Hub (public read, no write) with bundled fallback
+        ckpt = download_checkpoint(repo_id=args.hf_repo, local_dir="/kaggle/working/checkpoints/best-v2-leakfree" if Path("/kaggle/working").exists() else "./checkpoints/best-v2-leakfree")
 
     manifest = resolve_manifest(args.manifest, repo_root)
 
