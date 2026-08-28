@@ -81,7 +81,12 @@ def evaluate_model(checkpoint_path, manifest_path, device="auto", max_samples=20
             target = torch.tensor(item["target"], dtype=torch.float32)  # [L]
             # Use model if available, else use plddt as baseline
             if model:
-                feats = extract_all(seq, device=device, af_kwargs={"plddt": item.get("plddt")})
+                # [LEAK-FIX] target = plddt - disorder*10 (fetch_real.py); feeding the
+                # source pLDDT back in as an AF feature made this trivially solvable
+                # by copy-through (naive raw-pLDDT baseline measured r=0.9995 on real
+                # held-out AFDB proteins, beating the leaked model's own 0.9987).
+                # Withhold it here too so eval matches the corrected training input.
+                feats = extract_all(seq, device=device, af_kwargs={"plddt": None})
                 esm = feats["esm"].to(device)
                 prott5 = feats["prott5"].to(device)
                 af = feats["af"].to(device)
@@ -125,6 +130,27 @@ def evaluate_model(checkpoint_path, manifest_path, device="auto", max_samples=20
     aleatoric_mean = var.mean()
     epistemic_mean = (1.0/np.array(k_all)).mean()
 
+    # Predictive-interval coverage: this is the calibration check that actually
+    # exercises the (k,theta) uncertainty head, as opposed to ece_score()/brier()
+    # above which only compare point predictions on a 0-1 scale and say nothing
+    # about whether the model's own uncertainty is trustworthy. For each nominal
+    # coverage level, build a Normal(pred, var) interval from the predicted
+    # aleatoric variance and check how often the true target actually falls
+    # inside it -- a well-calibrated model's empirical coverage should track the
+    # nominal level (e.g. ~90% of targets inside the 90% interval).
+    from scipy.stats import norm
+    y_pred_abs = np.array(y_pred_all)  # 0-100 scale, matches var's scale
+    y_true_abs = np.array(y_true_all)
+    std = np.sqrt(np.maximum(var, 1e-6))
+    coverage = {}
+    for level in (0.50, 0.80, 0.90, 0.95):
+        z = norm.ppf(0.5 + level / 2)
+        lo, hi = y_pred_abs - z * std, y_pred_abs + z * std
+        empirical = float(np.mean((y_true_abs >= lo) & (y_true_abs <= hi)))
+        coverage[f"nominal_{int(level*100)}"] = {"empirical_coverage": empirical,
+                                                   "gap": empirical - level}
+    interval_calibration_error = float(np.mean([abs(v["gap"]) for v in coverage.values()]))
+
     # Ramachandran
     rama = ramachandran_stats(phi_all, psi_all)
 
@@ -140,6 +166,8 @@ def evaluate_model(checkpoint_path, manifest_path, device="auto", max_samples=20
         "brier_plddt": float(brier_plddt),
         "aleatoric_mean": float(aleatoric_mean),
         "epistemic_mean": float(epistemic_mean),
+        "interval_coverage": coverage,
+        "interval_calibration_error": interval_calibration_error,
         "ramachandran": rama,
         "model": checkpoint_path
     }

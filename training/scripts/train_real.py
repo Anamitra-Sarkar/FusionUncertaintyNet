@@ -121,7 +121,17 @@ def build_split(items, encoders, device, max_len, limit, log_every=250):
         except Exception as e:
             print(f"[skip] {it['accession']}: {e}", flush=True)
             continue
-        af = extract_af_features(seq, plddt=it.get("plddt"),
+        # [LEAK-FIX] `target` in the manifest is derived as plddt - disorder*10
+        # (see data-pipeline/fetch_real.py). Feeding the source pLDDT back in as
+        # an AF input feature made the regression trivially solvable by the AF
+        # branch alone (naive raw-pLDDT baseline measured r=0.9995 on held-out
+        # AFDB proteins vs. this model's own reported val Pearson of 0.9987 --
+        # the "fusion" contributed nothing and the model lost to the baseline
+        # it was supposed to beat). Withhold pLDDT from the AF feature branch
+        # during training so ESM2/ProtT5 must actually carry the prediction;
+        # phi/psi geometric context is kept since it isn't a near-linear
+        # transform of the target.
+        af = extract_af_features(seq, plddt=None,
                                  phi=it.get("phi"), psi=it.get("psi"))  # [L,7]
         tgt = torch.tensor(it["target"][:L], dtype=torch.float32)
         phi = torch.tensor(it.get("phi", [0]*L)[:L], dtype=torch.float32)
