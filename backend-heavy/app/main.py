@@ -26,6 +26,96 @@ _model_source = "not-loaded"
 _model_load_error: Optional[str] = None
 _device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Lazy isotonic calibration artifact (opt-in, fail-closed).  Disabled by default
+# — when CALIBRATION_ARTIFACT_ENABLED != "true", behavior is byte-identical to
+# current production (no download, no rescaling).
+_calibration_breakpoints = None
+_calibration_breakpoints_error: Optional[str] = None
+_calibration_breakpoints_path: Optional[str] = None
+
+
+def _get_calibration_breakpoints():
+    """Lazily download and cache calibration breakpoints (opt-in path).
+
+    Env:
+      CALIBRATION_ARTIFACT_ENABLED=true to enable
+      CALIBRATION_ARTIFACT_REPO (default bhumi.../fusionuncertaintynet-best-v2-leakfree)
+      CALIBRATION_ARTIFACT_PATH (default calibration/calibration-isotonic-v1.json)
+      CALIBRATION_ARTIFACT_REVISION (optional pinned HF revision)
+      CALIBRATION_ARTIFACT_LOCAL_PATH (optional local JSON override, for tests)
+      HF_TOKEN (optional for private repo; public read uses anonymous)
+
+    Fail-closed: any download/parse error is cached as _calibration_breakpoints_error
+    and re-raised so the caller can fall back to raw predictions.
+    """
+    global _calibration_breakpoints, _calibration_breakpoints_error, _calibration_breakpoints_path
+    if _calibration_breakpoints is not None:
+        return _calibration_breakpoints
+    if _calibration_breakpoints_error is not None:
+        raise RuntimeError(_calibration_breakpoints_error)
+
+    # Local override for tests / offline dev
+    local_override = os.getenv("CALIBRATION_ARTIFACT_LOCAL_PATH", "").strip()
+    if local_override and os.path.isfile(local_override):
+        try:
+            import json as _json
+
+            data = _json.loads(open(local_override).read())
+            bp = data.get("breakpoints", data)
+            # normalize: expect dict with x/y
+            if isinstance(bp, dict) and ("x" in bp or "nominal" in bp):
+                _calibration_breakpoints = bp
+            elif isinstance(data, dict) and "x" in data:
+                _calibration_breakpoints = data
+            else:
+                _calibration_breakpoints = bp
+            _calibration_breakpoints_path = local_override
+            print(f"[heavy] calibration breakpoints loaded from local override {local_override}")
+            return _calibration_breakpoints
+        except Exception as e:
+            _calibration_breakpoints_error = f"local calibration load failed: {e}"
+            raise RuntimeError(_calibration_breakpoints_error) from e
+
+    repo = os.getenv("CALIBRATION_ARTIFACT_REPO", "").strip() or "bhumika-tewari-282006/fusionuncertaintynet-best-v2-leakfree"
+    path_in_repo = os.getenv("CALIBRATION_ARTIFACT_PATH", "").strip() or "calibration/calibration-isotonic-v1.json"
+    revision = os.getenv("CALIBRATION_ARTIFACT_REVISION", "").strip() or None
+    token = os.getenv("HF_TOKEN", "").strip() or None
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        kwargs = dict(repo_id=repo, filename=path_in_repo, repo_type="model")
+        if revision:
+            kwargs["revision"] = revision
+        if token:
+            kwargs["token"] = token
+        local_path = hf_hub_download(**kwargs)
+        import json as _json
+
+        data = _json.loads(open(local_path).read())
+        bp = data.get("breakpoints", data)
+        if isinstance(bp, dict) and ("x" in bp or "nominal" in bp):
+            _calibration_breakpoints = bp
+        elif isinstance(data, dict) and "x" in data:
+            _calibration_breakpoints = data
+        else:
+            _calibration_breakpoints = bp
+        _calibration_breakpoints_path = local_path
+        print(f"[heavy] calibration breakpoints loaded from HF {repo}:{path_in_repo}")
+        return _calibration_breakpoints
+    except Exception as e:
+        _calibration_breakpoints_error = str(e)
+        print(f"[heavy] calibration breakpoints download failed: {e}")
+        raise
+
+
+def _reset_calibration_cache():
+    """For tests: clear cached breakpoints so env changes take effect."""
+    global _calibration_breakpoints, _calibration_breakpoints_error, _calibration_breakpoints_path
+    _calibration_breakpoints = None
+    _calibration_breakpoints_error = None
+    _calibration_breakpoints_path = None
+
 
 class ModelNotReady(RuntimeError):
     """Raised when the deployed release is not independently approved and loadable."""
@@ -188,6 +278,37 @@ def predict(req: PredictRequest):
     tot_list = tot.squeeze(-1).cpu().tolist()
     k_list = k.squeeze(-1).cpu().tolist()
     th_list = theta.squeeze(-1).cpu().tolist()
+
+    # Opt-in isotonic calibration: strictly gated, fail-closed, byte-identical when disabled.
+    # When CALIBRATION_ARTIFACT_ENABLED=true, breakpoints are lazily downloaded
+    # (cached) and theta/aleatoric/total_unc are rescaled via the shared
+    # pure-numpy helper (var = k*theta^2, ale = var, epi = 1/k, tot = ale + 50*epi,
+    # matching edr.py).  Any failure falls back to raw values.
+    if os.getenv("CALIBRATION_ARTIFACT_ENABLED", "").strip().lower() == "true":
+        try:
+            # lazy import keeps default path free of calibration dependency
+            from fusionuncertaintynet.calibration import apply_isotonic_calibration
+
+            import numpy as _np
+
+            bp = _get_calibration_breakpoints()
+            k_arr = _np.array(k_list, dtype=float)
+            th_arr = _np.array(th_list, dtype=float)
+            pred_arr = _np.array(pred_list, dtype=float)
+            k_cal, th_cal, ale_cal, epi_cal, tot_cal = apply_isotonic_calibration(
+                pred_arr, k_arr, th_arr, bp
+            )
+            # overwrite reported uncertainty (k unchanged, theta/ale/tot calibrated)
+            th_list = th_cal.tolist()
+            ale_list = ale_cal.tolist()
+            epi_list = epi_cal.tolist()
+            tot_list = tot_cal.tolist()
+            # k_list intentionally unchanged (isotonic calibrates scale, not shape param)
+            print("[heavy] isotonic calibration applied")
+        except Exception as e:
+            print(f"[heavy] calibration skipped (fail-closed): {e}")
+            # keep original raw values — byte-identical fallback
+            pass
 
     residues = []
     outliers = 0
