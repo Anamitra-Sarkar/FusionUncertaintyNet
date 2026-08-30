@@ -149,6 +149,107 @@ def _pick_device() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Encoder-mode fix — the leakfree retrain was done with SMALL encoders
+# (ESM2 t12 35M -> pad 1280, ESM2 t30 150M -> pad 1024) on CPU, see
+# retrain_checkpoints_v2/best/metrics.json encoder_mode=small. The standalone
+# script previously always loaded full ESM2 t33 650M + ProtT5-XL on T4, feeding
+# out-of-distribution vectors into projection layers trained on zero-padded
+# small embeddings -> pearson 0.007, aleatoric 707. We now auto-detect the
+# checkpoint's encoder_mode and replicate the training encoders exactly.
+# Also forwards phi/psi correctly (training kept geometry, eval previously nulled it).
+# ---------------------------------------------------------------------------
+
+def _detect_encoder_mode(checkpoint_path: str) -> str:
+    """Detect encoder mode from checkpoint metrics.json; defaults to small for leakfree artifact."""
+    import json as _json
+    p = Path(checkpoint_path)
+    if p.is_file():
+        p = p.parent
+    for cand in [p / "metrics.json", p.parent / "metrics.json", Path("retrain_checkpoints_v2/best/metrics.json")]:
+        if cand.is_file():
+            try:
+                data = _json.loads(cand.read_text())
+                m = data.get("encoder_mode") or data.get("mode")
+                if m in ("small", "full"):
+                    print(f"[eval-calib] detected encoder_mode={m} from {cand}")
+                    return m
+            except Exception as e:
+                print(f"[eval-calib] metrics read failed {cand}: {e}")
+    print("[eval-calib] encoder_mode not found in metrics.json -> defaulting to small (retrain_checkpoints_v2/best is small). Use --encoder-mode full to override")
+    return "small"
+
+
+def _pad_to_dim(x, dim: int):
+    """Pad last dim with zeros on the right, identical to train_real.py pad_to."""
+    import torch.nn.functional as F
+    if x.size(-1) == dim:
+        return x
+    return F.pad(x, (0, dim - x.size(-1)))
+
+
+# Global caches for small encoders (lazy)
+_SMALL_ESM = None
+_SMALL_ESM_BC = None
+_SMALL_PT5 = None
+_SMALL_PT5_BC = None
+
+def _small_esm_embed(seq: str, device: str):
+    global _SMALL_ESM, _SMALL_ESM_BC
+    import torch
+    if _SMALL_ESM is None:
+        import esm
+        _SMALL_ESM, alphabet = esm.pretrained.esm2_t12_35M_UR50D()
+        _SMALL_ESM = _SMALL_ESM.eval().to(device)
+        if device == "cuda":
+            _SMALL_ESM = _SMALL_ESM.half()
+        _SMALL_ESM_BC = alphabet.get_batch_converter()
+    _, _, tok = _SMALL_ESM_BC([("p", seq)])
+    tok = tok.to(device)
+    with torch.no_grad():
+        out = _SMALL_ESM(tok, repr_layers=[_SMALL_ESM.num_layers])
+        reps = out["representations"][_SMALL_ESM.num_layers][0, 1: len(seq)+1]
+    return reps.float().cpu()
+
+def _small_pt5_embed(seq: str, device: str):
+    global _SMALL_PT5, _SMALL_PT5_BC
+    import torch
+    if _SMALL_PT5 is None:
+        import esm
+        _SMALL_PT5, alphabet = esm.pretrained.esm2_t30_150M_UR50D()
+        _SMALL_PT5 = _SMALL_PT5.eval().to(device)
+        _SMALL_PT5_BC = alphabet.get_batch_converter()
+    _, _, tok = _SMALL_PT5_BC([("p", seq)])
+    tok = tok.to(device)
+    with torch.no_grad():
+        out = _SMALL_PT5(tok, repr_layers=[_SMALL_PT5.num_layers])
+        reps = out["representations"][_SMALL_PT5.num_layers][0, 1: len(seq)+1]
+    return reps.float().cpu()
+
+def _extract_matched_features(seq: str, device: str, encoder_mode: str, phi=None, psi=None):
+    """Extract features matching training encoders.
+
+    small: ESM t12 480->pad1280 via _small_esm_embed, ESM t30 640->pad1024, AF with phi/psi
+    full:  ESM t33 650M + ProtT5-XL via extraction.extract_all with phi/psi preserved
+    Returns dict with keys esm [L,1280], prott5 [L,1024], af [L,7], stats
+    """
+    from fusionuncertaintynet.extraction import extract_af_features, sequence_stats
+    import torch
+    seq_clean = seq.strip().upper().replace(" ", "").replace("\n", "")
+    af = extract_af_features(seq_clean, plddt=None, phi=phi, psi=psi)
+    stats = sequence_stats(seq_clean)
+    if encoder_mode == "small":
+        esm_raw = _small_esm_embed(seq_clean, device)
+        pt5_raw = _small_pt5_embed(seq_clean, device)
+        esm = _pad_to_dim(esm_raw, 1280)
+        prott5 = _pad_to_dim(pt5_raw, 1024)
+        return {"esm": esm, "prott5": prott5, "af": af, "stats": stats}
+    else:
+        from fusionuncertaintynet.extraction import extract_all
+        feats = extract_all(seq_clean, device=device, af_kwargs={"plddt": None, "phi": phi, "psi": psi})
+        feats["af"] = af
+        return feats
+
+# ---------------------------------------------------------------------------
 # HF Hub — public read download (no write)
 # ---------------------------------------------------------------------------
 HF_CHECKPOINT_REPO = "bhumika-tewari-282006/fusionuncertaintynet-best-v2-leakfree"
@@ -524,6 +625,7 @@ def run_interval_calibration(
     device: str = "auto",
     max_samples: int | None = 841,
     out_path: str = "eval_results/interval_calibration.json",
+    encoder_mode: str | None = None,
 ) -> dict:
     """
     Load model and run interval calibration on held-out val.
@@ -533,6 +635,10 @@ def run_interval_calibration(
       - fusionuncertaintynet.extraction.extract_all(seq, device, af_kwargs={"plddt": None})
         (leak-fix: plddt withheld, same as evaluate.py:89 and train_real.py:134)
       - dataset.ProteinQualityDataset(manifest, synthetic_fallback=True)
+
+    encoder_mode: "small" (ESM t12+t30 padded) or "full" (ESM t33+ProtT5-XL).
+                  If None, auto-detect from checkpoint metrics.json; defaults to small
+                  for the leakfree retrain artefact.
     """
     import torch
     import numpy as np  # used for final stats
@@ -540,7 +646,11 @@ def run_interval_calibration(
     if device == "auto":
         device = _pick_device()
 
-    print(f"[eval-calib] device={device} checkpoint={checkpoint_path}")
+    if encoder_mode is None:
+        encoder_mode = _detect_encoder_mode(checkpoint_path)
+    assert encoder_mode in ("small", "full"), f"unknown encoder_mode {encoder_mode}"
+
+    print(f"[eval-calib] device={device} checkpoint={checkpoint_path} encoder_mode={encoder_mode}")
     print(f"[eval-calib] manifest={manifest_path}")
 
     # ---- dataset & split (must match train_real.py:157, not evaluate.py naive last-10%) ----
@@ -596,6 +706,10 @@ def run_interval_calibration(
     print(f"[eval-calib] Loaded FusionUncertaintyNet from {ckpt_dir} (d_fused={model.d_fused}) on {device}")
 
     # ---- per-protein inference — MUST withhold plddt (leak-fix) ----
+    # BUG FIX: previously always used full ESM2 t33 + ProtT5-XL via extract_all
+    # and dropped phi/psi (neutral zeros). Training used small encoders (t12+t30
+    # padded) and kept phi/psi. Now we match training exactly via
+    # _extract_matched_features which handles both modes and phi/psi forwarding.
     # evaluate.py:89 => extract_all(seq, device=device, af_kwargs={"plddt": None})
     # train_real.py:134 => extract_af_features(seq, plddt=None, phi=..., psi=...)
     # phi/psi kept (geometric context, not near-linear in target)
@@ -609,12 +723,9 @@ def run_interval_calibration(
         for idx, item in enumerate(val_items):
             seq = item["sequence"]
             target = item["target"]  # list 0-100 per residue
-            # --- extraction (real ESM2/ProtT5) ---
-            # extract_all handles P100 fallback internally (extraction.py _resolve_device)
+            # --- extraction — matched to training encoders + phi/psi ---
             try:
-                from fusionuncertaintynet.extraction import extract_all
-
-                feats = extract_all(seq, device=device, af_kwargs={"plddt": None})
+                feats = _extract_matched_features(seq, device=device, encoder_mode=encoder_mode, phi=item.get("phi"), psi=item.get("psi"))
                 esm = feats["esm"].to(device)
                 prott5 = feats["prott5"].to(device)
                 af = feats["af"].to(device)
@@ -681,6 +792,7 @@ def run_interval_calibration(
         "checkpoint_local": ckpt_dir,
         "manifest": manifest_path,
         "device": device,
+        "encoder_mode": encoder_mode,
         "n_proteins": len(val_items),
         "n_residues": len(y_true_all),
         "pearson": pearson,
@@ -698,8 +810,10 @@ def run_interval_calibration(
         "notes": {
             "split": "md5(accession)%10==9 per train_real.py:157 (documented-equivalent 841-val; cap if needed)",
             "af_plddt_withheld": True,
-            "extraction": "real ESM2 t33 650M + ProtT5-XL via extraction.py (T4) / real-Esm small fallback on P100/CPU still real PLM",
+            "af_phi_psi_forwarded": True,
+            "extraction": f"matched to training encoder_mode={encoder_mode}: small=ESM t12 35M->pad1280 + ESM t30 150M->pad1024, full=ESM t33 650M + ProtT5-XL (previous bug always used full)",
             "interval_logic": "evaluate.py:141-152 Normal(pred, var=k*theta^2) coverage at 50/80/90/95",
+            "bugfix": "encoder mismatch (full vs small) + phi/psi withheld; fixed in this revision to match train_real.py:134 and metrics.json encoder_mode",
         },
     }
 
@@ -761,6 +875,12 @@ def main():
         help="Cap val proteins to this many (md5-selected first N; 841 matches published val size). 0 or -1 for all.",
     )
     parser.add_argument(
+        "--encoder-mode",
+        default=None,
+        choices=["small", "full"],
+        help="Encoder mode matching training (small=ESM t12+t30 padded, full=ESM t33+ProtT5-XL). Auto-detected from checkpoint metrics.json if omitted.",
+    )
+    parser.add_argument(
         "--hf-repo",
         default=HF_CHECKPOINT_REPO,
         help="HF Hub checkpoint repo (public read)",
@@ -798,6 +918,7 @@ def main():
         device=args.device,
         max_samples=max_samp,
         out_path=args.out,
+        encoder_mode=args.encoder_mode,
     )
 
 
