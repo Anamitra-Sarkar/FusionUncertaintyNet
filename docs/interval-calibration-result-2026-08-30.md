@@ -45,3 +45,39 @@ Do not flip `MODEL_RELEASE_APPROVED` on the strength of this result alone. The p
 ## Recommended next step
 
 Systematic over-coverage across all four nominal levels (50/80/90/95, monotonically improving gap as nominal increases) is the classic signature of an uncertainty head that needs **temperature/variance scaling**, not a redesign: fit a single scalar multiplier on `theta` (or divisor on the implied variance) against this same held-out split to shrink predicted intervals until empirical coverage matches nominal, then re-run this exact evaluation to confirm. This is a small, well-scoped follow-up — do not re-attempt a blind retrain.
+
+## Temperature-scaling result (2026-08-30) — real, honest, does NOT fully close the gate
+
+`training/kaggle/fit_interval_temperature.py` (new) fits a scalar multiplier `T` on
+the predicted `theta` (std scaled by `T`), on a **protein-level** fit/test split of
+the same 841-protein held-out set (md5-salted, disjoint from the val-set selection
+hash so no protein leaks across the split): 407 proteins for fitting `T`, 434 held
+out purely for reporting. Real Modal T4 run, real ESM2 encoders, same checkpoint.
+
+Fitted `T = 0.21` (theta scaled down to ~21% of its predicted value — confirms the
+head's raw uncertainty output is roughly 5x too wide).
+
+| | pre-scaling | post-scaling (T=0.21) |
+|---|---|---|
+| FIT split interval_calibration_error | 0.185 | 0.076 |
+| **TEST split interval_calibration_error (never used to fit T)** | 0.177 | **0.086** |
+
+**Honest read:** temperature scaling helps substantially — the held-out test error
+roughly halves (0.177 → 0.086) — but it does **not** clear the `<0.07` bar. Looking
+at the post-scaling coverage detail on the test split, `T=0.21` overcorrects at the
+high end: 50%-nominal coverage is now 62.7% (better, still over), but 90%-nominal
+coverage drops to 81.6% and 95%-nominal to 84.4% (now **under**-covering at the
+tails). A single global scalar cannot simultaneously fix a distribution that is
+over-wide at low nominal levels and (after correction) under-wide at high nominal
+levels — this is a real structural finding, not a fitting failure: the Gamma
+`(k, theta)` head's uncertainty shape itself, not just its scale, is miscalibrated.
+A genuine fix would need level-dependent recalibration (e.g. isotonic/quantile
+recalibration of the predictive CDF) rather than a single multiplicative constant,
+which is a larger change than this scoped follow-up was meant to be.
+
+**Verdict: gate still NOT PASSED**, now with a real, informative negative result
+about *why* — not just "not measured" or "buggy," but "the uncertainty head's
+distributional shape needs recalibration, and scale correction alone gets you
+roughly halfway (0.181 → 0.086, bar is 0.07)." `MODEL_RELEASE_APPROVED` remains
+correctly unset on uncertainty-calibration grounds; the point-prediction release
+path (Pearson 0.881) remains valid on its own terms.
