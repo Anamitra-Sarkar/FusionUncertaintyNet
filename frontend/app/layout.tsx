@@ -42,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <li><a href="/" className="hover:text-accent transition-colors">Overview</a></li>
                 <li><a href="/dashboard" className="hover:text-accent transition-colors">Research workspace</a></li>
                 <li><a href="/history" className="hover:text-accent transition-colors">Research record</a></li>
+                <li><a href="/calibration-evidence" className="hover:text-accent transition-colors">Calibration evidence</a></li>
               </ul>
             </div>
             <div className="md:text-right">

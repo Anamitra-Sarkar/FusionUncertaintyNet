@@ -30,6 +30,7 @@ export default function SiteHeader() {
     { href: "/", label: "Overview" },
     { href: "/dashboard", label: "Workspace" },
     { href: "/history", label: "Research record" },
+    { href: "/calibration-evidence", label: "Calibration evidence" },
   ];
   const authed = ready && !!user;
   const initial = user?.email?.[0]?.toUpperCase() ?? "?";

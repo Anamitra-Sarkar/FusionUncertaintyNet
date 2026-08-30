@@ -81,3 +81,51 @@ distributional shape needs recalibration, and scale correction alone gets you
 roughly halfway (0.181 → 0.086, bar is 0.07)." `MODEL_RELEASE_APPROVED` remains
 correctly unset on uncertainty-calibration grounds; the point-prediction release
 path (Pearson 0.881) remains valid on its own terms.
+
+## Isotonic recalibration result (2026-08-30) — real, gate PASSES
+
+`training/kaggle/fit_interval_isotonic.py` implements the level-dependent fix this
+doc's own prior section called for: PIT (probability-integral-transform) recalibration
+via isotonic regression, rather than a single scalar. Method: on the FIT split only,
+compute each residue's PIT value `u_i = Φ((y_true - pred) / std)` under the same
+`Normal(pred, var=k·θ²)` approximation used everywhere else in this doc, sort, fit a
+monotone isotonic map from nominal quantile → empirical quantile
+(`sklearn.isotonic.IsotonicRegression`, clipped to [0,1]), then invert that map to get
+calibrated interval endpoints, applied to the held-out TEST split's raw PIT values.
+
+Real Modal T4 run, same checkpoint, protein-level fit/test split (430 fit proteins /
+144,071 residues, 411 test proteins / 127,240 residues — a fresh disjoint split, not
+identical to the temperature-fit run's 407/434 split above, but drawn the same way).
+
+| | FIT split | **TEST split (never used for fitting)** |
+|---|---|---|
+| raw | 0.1794 | **0.1825** |
+| temperature (T refit on same fit split, T=0.235) | 0.0769 | **0.0790** |
+| isotonic | 0.0000034 (expected — fit split) | **0.0070** |
+
+Gate (`<0.07`): raw **FAIL**, temperature-refit **FAIL** (0.079, consistent with the
+Modal T=0.21 run's 0.086 — a scalar genuinely cannot close this gap, confirmed twice
+now), isotonic **PASS** — 0.0070 clears the bar by roughly 10x, on a real held-out test
+split the isotonic map never saw.
+
+**Honest caveats** (from the run's own self-reported caveat field, worth keeping
+verbatim): "Isotonic recalibration is more flexible than a single scalar T and can
+overfit the calibration map itself when the FIT split is small. With ~430 proteins /
+~144k residues (fit split), the map has ample data for a 1D monotone fit... Report TEST
+error (never used for fitting) as the honest number; FIT error is optimistic. Also, the
+`Normal(pred,var)` predictive approximation is itself a model choice — true predictive
+may be non-Gaussian; isotonic PIT recalibration corrects marginal CDF shape but not
+conditional structure." In plain terms: this fixes the *shape* of the miscalibration
+(the CDF is monotonically remapped to match empirical quantiles) but doesn't prove the
+underlying Gamma/Normal approximation is the right family — a real, disclosed
+limitation, not swept under the rug.
+
+**Verdict: the uncertainty-calibration gate now PASSES for the first time this
+session**, on a real held-out test split (411 proteins, 127,240 residues), with the
+error nearly an order of magnitude inside the bar. Combined with the already-passing
+point-prediction gate (Pearson 0.881), FusionUncertaintyNet now has real, honest
+evidence clearing both scientific gates the model card requires. This alone does not
+flip `MODEL_RELEASE_APPROVED` — that requires the coordinator/human to review this
+result and follow the project's own promotion process (deploying the isotonic map
+alongside the checkpoint at inference time is a real engineering step not yet done —
+the fitted map exists only in this evaluation run's output, not wired into serving).
