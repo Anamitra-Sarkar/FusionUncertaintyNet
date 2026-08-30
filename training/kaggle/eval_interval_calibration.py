@@ -616,6 +616,84 @@ def compute_interval_coverage(
     return coverage, interval_calibration_error
 
 
+def collect_predictions(
+    model,
+    val_items: list,
+    device: str,
+    encoder_mode: str,
+) -> tuple[list[float], list[float], list[float], list[float], list[tuple[int, int]]]:
+    """
+    Run the model over val_items and collect residue-level (y_true, y_pred, k, theta),
+    plus protein_bounds: a (start, end) residue-index range per protein in val_items,
+    in the same order, so callers can do a protein-level (not residue-level) split
+    without residues from the same protein leaking across a fit/test split.
+
+    Extracted from run_interval_calibration's inference loop (identical logic) so
+    fit_interval_temperature.py can reuse it instead of duplicating the extraction/
+    forward/leak-fix code.
+    """
+    y_true_all: list[float] = []
+    y_pred_all: list[float] = []
+    k_all: list[float] = []
+    theta_all: list[float] = []
+    protein_bounds: list[tuple[int, int]] = []
+
+    t0 = time.time()
+    with torch.no_grad():
+        for idx, item in enumerate(val_items):
+            seq = item["sequence"]
+            target = item["target"]  # list 0-100 per residue
+            start = len(y_true_all)
+            # --- extraction — matched to training encoders + phi/psi ---
+            try:
+                feats = _extract_matched_features(seq, device=device, encoder_mode=encoder_mode, phi=item.get("phi"), psi=item.get("psi"))
+                esm = feats["esm"].to(device)
+                prott5 = feats["prott5"].to(device)
+                af = feats["af"].to(device)
+                stats = torch.tensor(
+                    [feats["stats"]["length"], feats["stats"]["charged_frac"], feats["stats"]["disorder"]],
+                    dtype=torch.float32,
+                    device=device,
+                )
+            except Exception as e:
+                print(f"[eval-calib] WARN skip {item.get('accession')} extraction failed: {e}")
+                continue
+
+            # --- forward — verified against model.py:15-39 and edr.py:61-84 ---
+            # model(esm, prott5, af, stats) -> dict with pred [L,1], k [L,1], theta [L,1]
+            try:
+                out = model(esm, prott5, af, stats)
+                # training code: torch.cat([o["pred"] for o in ...]) then flatten
+                pred = out["pred"].squeeze(-1).detach().cpu().numpy()  # [L]
+                k = out["k"].squeeze(-1).detach().cpu().numpy()
+                theta = out["theta"].squeeze(-1).detach().cpu().numpy()
+            except Exception as e:
+                print(f"[eval-calib] WARN skip {item.get('accession')} forward failed: {e}")
+                continue
+
+            L = len(seq)
+            # align lengths (in case truncation at 1022)
+            L_pred = min(len(pred), len(target), L)
+            y_true_all.extend(float(x) for x in target[:L_pred])
+            y_pred_all.extend(float(x) for x in pred[:L_pred])
+            k_all.extend(float(x) for x in k[:L_pred])
+            theta_all.extend(float(x) for x in theta[:L_pred])
+            if L_pred > 0:
+                protein_bounds.append((start, len(y_true_all)))
+
+            if (idx + 1) % 50 == 0:
+                rate = (time.time() - t0) / (idx + 1)
+                eta = rate * (len(val_items) - idx - 1) / 60
+                print(f"[eval-calib] {idx+1}/{len(val_items)} proteins ({rate:.2f}s/prot, ETA {eta:.1f}m)")
+
+            # free GPU mem per P100 guidance
+            del esm, prott5, af, out, feats, pred, k, theta
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+    return y_true_all, y_pred_all, k_all, theta_all, protein_bounds
+
+
 # ---------------------------------------------------------------------------
 # Main eval loop — mirrors evaluate.py:evaluate_model with val-split fix
 # ---------------------------------------------------------------------------
@@ -713,60 +791,9 @@ def run_interval_calibration(
     # evaluate.py:89 => extract_all(seq, device=device, af_kwargs={"plddt": None})
     # train_real.py:134 => extract_af_features(seq, plddt=None, phi=..., psi=...)
     # phi/psi kept (geometric context, not near-linear in target)
-    y_true_all: list[float] = []
-    y_pred_all: list[float] = []
-    k_all: list[float] = []
-    theta_all: list[float] = []
-
-    t0 = time.time()
-    with torch.no_grad():
-        for idx, item in enumerate(val_items):
-            seq = item["sequence"]
-            target = item["target"]  # list 0-100 per residue
-            # --- extraction — matched to training encoders + phi/psi ---
-            try:
-                feats = _extract_matched_features(seq, device=device, encoder_mode=encoder_mode, phi=item.get("phi"), psi=item.get("psi"))
-                esm = feats["esm"].to(device)
-                prott5 = feats["prott5"].to(device)
-                af = feats["af"].to(device)
-                stats = torch.tensor(
-                    [feats["stats"]["length"], feats["stats"]["charged_frac"], feats["stats"]["disorder"]],
-                    dtype=torch.float32,
-                    device=device,
-                )
-            except Exception as e:
-                print(f"[eval-calib] WARN skip {item.get('accession')} extraction failed: {e}")
-                continue
-
-            # --- forward — verified against model.py:15-39 and edr.py:61-84 ---
-            # model(esm, prott5, af, stats) -> dict with pred [L,1], k [L,1], theta [L,1]
-            try:
-                out = model(esm, prott5, af, stats)
-                # training code: torch.cat([o["pred"] for o in ...]) then flatten
-                pred = out["pred"].squeeze(-1).detach().cpu().numpy()  # [L]
-                k = out["k"].squeeze(-1).detach().cpu().numpy()
-                theta = out["theta"].squeeze(-1).detach().cpu().numpy()
-            except Exception as e:
-                print(f"[eval-calib] WARN skip {item.get('accession')} forward failed: {e}")
-                continue
-
-            L = len(seq)
-            # align lengths (in case truncation at 1022)
-            L_pred = min(len(pred), len(target), L)
-            y_true_all.extend(float(x) for x in target[:L_pred])
-            y_pred_all.extend(float(x) for x in pred[:L_pred])
-            k_all.extend(float(x) for x in k[:L_pred])
-            theta_all.extend(float(x) for x in theta[:L_pred])
-
-            if (idx + 1) % 50 == 0:
-                rate = (time.time() - t0) / (idx + 1)
-                eta = rate * (len(val_items) - idx - 1) / 60
-                print(f"[eval-calib] {idx+1}/{len(val_items)} proteins ({rate:.2f}s/prot, ETA {eta:.1f}m)")
-
-            # free GPU mem per P100 guidance
-            del esm, prott5, af, out, feats, pred, k, theta
-            if device == "cuda":
-                torch.cuda.empty_cache()
+    y_true_all, y_pred_all, k_all, theta_all, protein_bounds = collect_predictions(
+        model, val_items, device=device, encoder_mode=encoder_mode
+    )
 
     print(f"[eval-calib] Done inference: {len(y_true_all)} residues from {len(val_items)} proteins")
     if len(y_true_all) == 0:
