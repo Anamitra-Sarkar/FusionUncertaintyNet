@@ -632,6 +632,8 @@ def collect_predictions(
     fit_interval_temperature.py can reuse it instead of duplicating the extraction/
     forward/leak-fix code.
     """
+    import torch
+
     y_true_all: list[float] = []
     y_pred_all: list[float] = []
     k_all: list[float] = []
