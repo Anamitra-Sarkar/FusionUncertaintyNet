@@ -7,6 +7,14 @@ import { RibbonArt } from "@/components/art";
 export default function Home() {
   return (
     <div className="space-y-12 sm:space-y-16">
+      <section aria-label="Hero illustration">
+        <img
+          src="/hero.png"
+          alt="Abstract illustration of a protein ribbon fading from sharply defined to blurred, with a confidence heatmap gradient"
+          style={{ width: '100%', maxWidth: '1100px', maxHeight: '300px', objectFit: 'cover', display: 'block', margin: '0 auto', borderRadius: 12 }}
+          loading="eager"
+        />
+      </section>
       <section className="relative grid md:grid-cols-2 gap-10 items-center pt-2 sm:pt-6">
         <div aria-hidden className="pointer-events-none absolute -top-24 -left-24 w-[420px] h-[420px] rounded-full opacity-60 blur-3xl"
              style={{background:"radial-gradient(closest-side, rgba(15,118,110,0.14), transparent)"}} />
